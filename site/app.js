@@ -487,13 +487,14 @@
 
   function hrefFor(plat) {
     if (plat.url) return plat.url; // direct asset URL (GitHub Releases API or local server)
-    if (GH) return `https://github.com/${GH.owner}/${GH.repo}/releases/latest/download/${encodeURIComponent(plat.file)}`;
+    if (GH) return `https://github.com/${GH.owner}/${GH.repo}/releases/latest`; // API unavailable → releases page
     const base = window.location.protocol === 'file:' ? '../dist/' : 'downloads/';
     return base + encodeURIComponent(plat.file);
   }
 
   // Map the latest GitHub Release's assets into the same shape /api/releases returns.
-  const ASSET_RE = /^Vibe Detector-(\d+\.\d+\.\d+)-(universal|x64|arm64)\.(dmg|zip)$/;
+  // GitHub sanitizes spaces in asset names to dots, so accept "Vibe Detector" or "Vibe.Detector".
+  const ASSET_RE = /^Vibe[ .]Detector-(\d+\.\d+\.\d+)-(universal|x64|arm64)\.(dmg|zip)$/;
   const fmtMB = (n) => `${(n / 1048576).toFixed(n >= 100 * 1048576 ? 0 : 1)} MB`;
 
   async function fetchGithubReleases(gh) {
