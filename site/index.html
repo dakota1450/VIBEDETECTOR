@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vibe Detector — Detect the vibe of every sound</title>
+  <meta name="description" content="A local-first sample browser that detects key, BPM, and type — so producers can find, preview, and drag the right sound straight into a DAW. Offline. Your sounds stay on your machine." />
+  <meta name="theme-color" content="#070709" />
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Vibe Detector — Detect the vibe of every sound" />
+  <meta property="og:description" content="A local-first sample browser that detects key, BPM, and type so you can find, preview, and drag the right sound straight into your DAW." />
+  <meta property="og:image" content="assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" type="image/png" href="assets/icon.png" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
+
+  <link rel="stylesheet" href="styles.css" />
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+  <!-- ===================== NAV ===================== -->
+  <nav class="nav" id="nav">
+    <div class="container">
+      <a class="brand" href="#top" aria-label="Vibe Detector home">
+        <img src="assets/icon.png" alt="" />
+        <span class="wordmark"><span class="vibe-w">VIBE</span> <span class="grad-text">DETECTOR</span></span>
+      </a>
+      <div class="nav-links">
+        <a class="nav-hide" href="#workflow">Workflow</a>
+        <a class="nav-hide" href="#wheel">Key wheel</a>
+        <a class="nav-hide" href="#detect">Detection</a>
+        <a class="nav-hide" href="#privacy">Privacy</a>
+        <a class="btn btn-primary btn-sm" href="#download"><i data-icon="download"></i> Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <span id="top"></span>
+
+  <!-- ===================== HERO ===================== -->
+  <header class="hero">
+    <div class="hero-bg"><canvas id="radar" width="820" height="820" aria-hidden="true"></canvas></div>
+    <div class="hero-scrim"></div>
+
+    <div class="hero-inner">
+      <span class="pill reveal"><span class="dot"></span> Local-first · offline · macOS &amp; Windows</span>
+
+      <h1 class="hero-title reveal">Detect the vibe of <span class="grad-text">every sound</span></h1>
+
+      <p class="hero-sub reveal">
+        A local-first sample browser that detects key, BPM, and type — so you can find,
+        preview, and drag the right sound straight into your DAW.
+      </p>
+
+      <div class="hero-detect reveal" id="heroDetect" aria-live="off">
+        <span class="scan-dot"></span><span id="heroDetectText">Scanning your library…</span>
+      </div>
+
+      <div class="hero-cta reveal">
+        <a class="btn btn-primary btn-lg" href="#download" data-download-jump><i data-icon="download"></i> Download free</a>
+        <a class="btn btn-secondary btn-lg" href="#workflow"><i data-icon="play-fill"></i> See the workflow</a>
+      </div>
+
+      <p class="hero-meta reveal mono" id="heroMeta">Free · v0.4.0 · macOS 12+ / Windows 10+</p>
+    </div>
+
+    <div class="scroll-hint" aria-hidden="true">
+      <span class="mouse"></span>
+      Scroll
+    </div>
+  </header>
+
+  <!-- ===================== SHOWCASE (real product UI) ===================== -->
+  <section class="showcase">
+    <div class="showcase-stage reveal">
+      <div class="shot" id="shot" data-tilt>
+        <div class="shot-bar">
+          <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
+          <span class="addr">Vibe Detector — 17 sounds</span>
+        </div>
+        <img src="assets/screenshot.png" alt="The Vibe Detector app: a circle-of-fifths key filter, a virtualized sound list with key badges, waveforms and type chips, and a preview player." />
+        <span class="shot-glow"></span>
+      </div>
+
+      <div class="mini-player" aria-hidden="true">
+        <button class="mp-play" type="button" aria-label="Preview"><i data-icon="play-fill"></i></button>
+        <span class="key-badge sm" style="--kc:hsl(90 58% 50%)">Am</span>
+        <span class="mp-name mono">8A_melody_loop.wav</span>
+        <div class="wave is-live" data-wave data-count="44" data-progress="0.46" style="--kc:hsl(90 58% 50%)"></div>
+        <span class="mp-time mono">2.0s</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MARQUEE ===================== -->
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track" id="marquee"><!-- filled by app.js --></div>
+  </div>
+
+  <!-- ===================== WORKFLOW ===================== -->
+  <section class="section" id="workflow">
+    <div class="container">
+      <div class="reveal">
+        <div class="eyebrow">Workflow</div>
+        <h2 class="section-title">From a folder of unsorted samples to the right sound in seconds.</h2>
+      </div>
+
+      <div class="workflow-grid" data-stagger>
+        <div class="card wf-card">
+          <div class="wf-head">
+            <span class="card-icon"><i data-icon="folder-plus"></i></span>
+            <span class="wf-num">01</span>
+          </div>
+          <div class="card-title">Add folders</div>
+          <p class="card-body">Point Vibe Detector at your sample folders. It scans recursively and watches for changes.</p>
+        </div>
+        <div class="card wf-card">
+          <div class="wf-head">
+            <span class="card-icon"><i data-icon="radar"></i></span>
+            <span class="wf-num">02</span>
+          </div>
+          <div class="card-title">Detect</div>
+          <p class="card-body">Key, tempo, and drum/melodic type are detected automatically — on device.</p>
+        </div>
+        <div class="card wf-card">
+          <div class="wf-head">
+            <span class="card-icon"><i data-icon="audio-lines"></i></span>
+            <span class="wf-num">03</span>
+          </div>
+          <div class="card-title">Preview</div>
+          <p class="card-body">Audition instantly with a real waveform, looping, volume, and keyboard control.</p>
+        </div>
+        <div class="card wf-card">
+          <div class="wf-head">
+            <span class="card-icon"><i data-icon="mouse-pointer"></i></span>
+            <span class="wf-num">04</span>
+          </div>
+          <div class="card-title">Drag to DAW</div>
+          <p class="card-body">Drag one or many sounds straight into your session as real files.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== KEY WHEEL ===================== -->
+  <section class="section section--alt" id="wheel">
+    <div class="container">
+      <div class="wheel-grid">
+        <div class="wheel-stage reveal" id="wheelStage"><!-- circle of fifths injected by app.js --></div>
+        <div class="reveal">
+          <div class="eyebrow">The signature</div>
+          <h2 class="section-title">Key is a color.</h2>
+          <p class="section-sub">
+            Every musical key maps to a hue around the circle of fifths. Once you see your library in
+            color, harmonic relationships jump out — adjacent keys layer cleanly, parallel minors sit
+            one ring in.
+          </p>
+          <div class="wheel-keys" id="wheelKeys"><!-- key badges injected by app.js --></div>
+          <p class="wheel-readout">Click the wheel — currently showing <b id="wheelReadout">A</b>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DETECTION ===================== -->
+  <section class="section" id="detect">
+    <div class="container">
+      <div class="reveal">
+        <div class="eyebrow">Detection</div>
+        <h2 class="section-title">Four signals, detected on every sound.</h2>
+      </div>
+
+      <div class="detect-grid" data-stagger>
+        <!-- Key -->
+        <div class="card">
+          <div class="detect-head">
+            <span class="card-icon"><i data-icon="circle-dot"></i></span>
+            <span class="name">Key</span>
+          </div>
+          <p class="card-body">Major and minor, mapped to the circle-of-fifths color system — filename, metadata, then on-device audio analysis.</p>
+          <div class="detect-row">
+            <span class="key-badge" style="--kc:hsl(0 82% 60%)">C</span>
+            <span class="key-badge" style="--kc:hsl(180 82% 60%)">F#</span>
+            <span class="key-badge" style="--kc:hsl(90 58% 50%)">Am</span>
+            <span class="key-badge" style="--kc:hsl(270 58% 50%)">D#m</span>
+          </div>
+        </div>
+
+        <!-- Tempo -->
+        <div class="card">
+          <div class="detect-head">
+            <span class="card-icon"><i data-icon="gauge"></i></span>
+            <span class="name">Tempo</span>
+          </div>
+          <p class="card-body">BPM with ½× / 2× awareness, plus preset and custom ranges so loops line up.</p>
+          <div class="bpm-readout"><span id="bpmValue" data-bpm-count="128">0</span> <small>BPM</small></div>
+        </div>
+
+        <!-- Type -->
+        <div class="card">
+          <div class="detect-head">
+            <span class="card-icon"><i data-icon="layers"></i></span>
+            <span class="name">Type</span>
+          </div>
+          <p class="card-body">Drum vs melodic, plus subtype: kick, 808, hi-hat, snare, loop, pluck, pad…</p>
+          <div class="detect-row">
+            <span class="chip">Kick</span>
+            <span class="chip">808</span>
+            <span class="chip">Hi-Hat</span>
+            <span class="chip chip-vibe">Loop</span>
+          </div>
+        </div>
+
+        <!-- Vibe Match -->
+        <div class="card">
+          <div class="detect-head">
+            <span class="card-icon"><i data-icon="sparkles"></i></span>
+            <span class="name">Vibe Match</span>
+          </div>
+          <p class="card-body">Suggests nearby keys and tempos for layering and transitions.</p>
+          <div class="detect-row">
+            <span class="key-badge sm" style="--kc:hsl(90 82% 60%)">A</span>
+            <i data-icon="arrow-right" class="muted-ic"></i>
+            <span class="key-badge sm" style="--kc:hsl(120 82% 60%)">E</span>
+            <span class="key-badge sm" style="--kc:hsl(60 82% 60%)">D</span>
+            <span class="key-badge sm" style="--kc:hsl(180 58% 50%)">F#m</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PRIVACY ===================== -->
+  <section class="section privacy section--alt" id="privacy">
+    <div class="container reveal">
+      <span class="privacy-mark"><i data-icon="shield-check"></i></span>
+      <h2>Your sounds never leave your machine.</h2>
+      <p>
+        Detection runs entirely on-device. No uploads, no accounts, no cloud. Local-first and fully
+        offline — your unreleased work stays yours.
+      </p>
+      <div class="privacy-points">
+        <span class="privacy-point"><i data-icon="check"></i> No account, ever</span>
+        <span class="privacy-point"><i data-icon="check"></i> Works fully offline</span>
+        <span class="privacy-point"><i data-icon="check"></i> Nothing is uploaded</span>
+        <span class="privacy-point"><i data-icon="check"></i> Open-source (MIT)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DOWNLOAD ===================== -->
+  <section class="section download" id="download">
+    <div class="download-glow"></div>
+    <div class="container">
+      <div class="reveal">
+        <div class="eyebrow" style="justify-content:center">Download</div>
+        <h2>Find the right sound, <span class="grad-text">faster</span>.</h2>
+        <p class="lead">Free and local-first. Pick your platform — your build is ready below.</p>
+      </div>
+
+      <div class="dl-cards" id="dlCards" data-stagger>
+        <!-- download cards injected from /api/releases by app.js -->
+      </div>
+      <noscript>
+        <p class="dl-note">
+          JavaScript is off —
+          <a href="https://github.com/dakota1450/VIBEDETECTOR/releases/latest">get the latest downloads on GitHub</a>.
+        </p>
+      </noscript>
+
+      <p class="dl-note reveal">
+        Builds are unsigned (no paid certificate), so each OS warns on first open — expected for
+        self-distributed apps. On macOS: right-click the app → <b>Open</b> → <b>Open</b>, or run
+        <code>xattr -dr com.apple.quarantine "/Applications/Vibe Detector.app"</code>.
+        On Windows: <b>More info</b> → <b>Run anyway</b>.
+      </p>
+
+      <div class="dl-tags reveal">
+        <span class="privacy-point"><i data-icon="check"></i> Free</span>
+        <span class="privacy-point"><i data-icon="check"></i> No sign-up</span>
+        <span class="privacy-point"><i data-icon="check"></i> Universal (Apple Silicon + Intel)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footer">
+    <div class="container">
+      <a class="brand" href="#top">
+        <img src="assets/icon.png" alt="" />
+        <span class="wordmark">VIBE DETECTOR</span>
+      </a>
+      <span class="foot-note">Detect the vibe of every sound. © 2026</span>
+    </div>
+  </footer>
+
+</body>
+</html>

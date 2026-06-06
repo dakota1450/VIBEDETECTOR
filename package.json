@@ -1,0 +1,92 @@
+{
+  "name": "vibe-detector",
+  "version": "0.4.0",
+  "description": "Detect the vibe of every sound — key, tempo & type aware sample browser for producers.",
+  "author": "Vibe Detector",
+  "license": "MIT",
+  "main": "./out/main/index.mjs",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "benchmark:key": "node scripts/key-detection-benchmark.mjs",
+    "site": "node scripts/serve-site.mjs",
+    "dist:dir": "electron-vite build && electron-builder --mac --dir",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist": "electron-vite build && electron-builder --mac --win"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.10.8",
+    "chokidar": "^3.6.0",
+    "fft.js": "^4.0.4",
+    "music-metadata": "^11.12.3",
+    "wavesurfer.js": "^7.8.6",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "framer-motion": "^11.11.7",
+    "png-to-ico": "^3.0.1",
+    "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.14",
+    "vitest": "^4.1.7"
+  },
+  "build": {
+    "appId": "com.vibedetector.app",
+    "productName": "Vibe Detector",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "universal"
+        },
+        {
+          "target": "zip",
+          "arch": "universal"
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Vibe Detector ${version}"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "zip",
+          "arch": "x64"
+        }
+      ]
+    }
+  }
+}

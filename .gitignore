@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+.vibe-dev-data/
+.vite/
+_libtest.txt
+index.mjs
+analysis.worker-*.js
