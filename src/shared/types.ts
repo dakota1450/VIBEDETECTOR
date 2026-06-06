@@ -127,6 +127,16 @@ export interface Sound {
   analyzedAt: number | null
   analysisVersion: number | null
   analysisError?: string | null
+  // Per-capability algorithm versions. Each detection step (key, tempo, type,
+  // waveform) tracks the version it was last *processed* at, so a future update can
+  // re-run only the step that changed — on only the sounds that benefit — instead of
+  // dragging the whole library back through every analyzer. Absent (legacy) = 0.
+  keyVersion?: number | null
+  bpmVersion?: number | null
+  typeVersion?: number | null
+  // Pipeline version at which a decode/analysis error was last recorded; lets a
+  // failed file retry automatically when the pipeline advances, but not every launch.
+  errorVersion?: number | null
   waveformPeaks?: number[] | null
   waveformVersion?: number | null
   needsAudioAnalysis: boolean
@@ -149,6 +159,7 @@ export interface ScanProgress {
   processed: number
   total: number
   analyzing: number // remaining audio-analysis jobs
+  analyzeTotal: number // jobs in the current analysis batch (for a determinate bar)
   currentFile: string | null
 }
 
@@ -196,6 +207,9 @@ export interface AnalysisJob {
   needsBpm: boolean
   classifyDrum: boolean
   needsPeaks?: boolean
+  // The sound's current type is a drum, so the worker should attempt a key even on
+  // low-confidence/percussive material (and save it flagged) rather than veto it.
+  isDrum?: boolean
 }
 
 // The API surface exposed to the renderer via the preload contextBridge.

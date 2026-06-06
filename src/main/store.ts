@@ -48,8 +48,20 @@ interface Persisted {
   sounds: Sound[]
 }
 
-const CURRENT_ANALYSIS_VERSION = 7
+// Per-capability analyzer versions. Bump ONE of these when its algorithm changes,
+// and only that detection step re-runs across the library — on only the sounds it can
+// still help — instead of re-decoding everything. This is what makes shipping a
+// detection improvement seamless: the next launch quietly backfills just the delta.
+const KEY_VERSION = 1
+const BPM_VERSION = 1
+const CLASSIFY_VERSION = 1
 const CURRENT_WAVEFORM_VERSION = 1
+// Advances whenever any analyzer does, so a file that previously failed to decode is
+// retried once after an update (but not on every launch).
+const PIPELINE_VERSION = KEY_VERSION + BPM_VERSION + CLASSIFY_VERSION + CURRENT_WAVEFORM_VERSION
+// Coarse "last fully analyzed at" stamp kept on each sound for display/diagnostics
+// only — gating now lives in the per-capability versions above.
+const CURRENT_ANALYSIS_VERSION = PIPELINE_VERSION
 const MAX_TAG_LENGTH = 48
 const MAX_TAGS_PER_SOUND = 64
 const MAX_NOTES_LENGTH = 5000
@@ -127,34 +139,56 @@ function cleanNotes(notes: unknown): string | null {
 
 export function needsAudioKey(s: Sound): boolean {
   if (s.keySource === 'manual') return false
-  if (!s.keyTonic) return true
-  if (s.keySource === 'analysis') return true
-  if (s.type === 'drum' || s.type === 'unknown') return true
-  if (s.keySource === 'filename') return s.keyConfidence < 0.85
-  if (s.keySource === 'metadata') return s.keyConfidence < 0.9
-  return s.keyConfidence < 0.55
+  // Trust strong producer-provided key tags; never recompute them on a version bump.
+  if (s.keySource === 'filename' && s.keyConfidence >= 0.85) return false
+  if (s.keySource === 'metadata' && s.keyConfidence >= 0.9) return false
+  // Run the key step once per algorithm version: this fills gaps, gives weak filename
+  // keys an audio pass, and re-keys everything when KEY_VERSION advances. Once stamped
+  // at the current version it stops — re-running the same audio yields the same result,
+  // so a low-confidence key (or a settled "no pitch") must not re-queue every launch.
+  return (s.keyVersion ?? 0) < KEY_VERSION
 }
 
 export function needsAudioBpm(s: Sound): boolean {
-  return s.bpm == null && s.bpmSource !== 'manual' && s.type !== 'drum'
+  if (s.bpmSource === 'manual') return false
+  if (s.type === 'drum') return false // one-shots/hits: a single tempo isn't meaningful
+  // Trust a producer's filename/metadata tempo; only fill a gap or re-derive a prior
+  // analysis tempo, and (like key) only once per BPM_VERSION so it never re-queues.
+  if (s.bpm != null && s.bpmSource !== 'analysis') return false
+  return (s.bpmVersion ?? 0) < BPM_VERSION
 }
 
 export function needsAudioClassification(s: Sound): boolean {
   if (s.typeSource === 'manual') return false
-  return s.type === 'unknown' || s.type === 'drum'
+  // Audio can only fill an unknown type or refine a drum's subtype; a confident
+  // melodic/drum filename type is left for the key step, not reclassified.
+  if (s.type !== 'unknown' && s.type !== 'drum') return false
+  return (s.typeVersion ?? 0) < CLASSIFY_VERSION
 }
 
 export function needsWaveformPeaks(s: Sound): boolean {
   return s.waveformVersion !== CURRENT_WAVEFORM_VERSION || !Array.isArray(s.waveformPeaks) || s.waveformPeaks.length < 16
 }
 
+/** Sooner = lower. Surface user-visible gaps first; cosmetic backfills last, so the
+ *  library *looks* like it's improving (keys filling in) instead of churning quietly. */
+function analysisPriority(s: Sound): number {
+  if (needsAudioClassification(s) && s.type === 'unknown') return 0 // no type at all
+  if (needsAudioKey(s) && s.type !== 'drum') return 1 // missing / weak melodic key
+  if (needsAudioKey(s)) return 2 // drum key (the new fill)
+  if (needsAudioBpm(s)) return 3
+  if (needsAudioClassification(s)) return 4 // drum subtype refine
+  return 5 // waveform-only / cosmetic backfill
+}
+
 function computeNeedsAnalysis(s: Sound): boolean {
-  if (s.analysisError) return false
-  if (needsWaveformPeaks(s)) return true
-  if (s.analyzedAt && s.analysisVersion === CURRENT_ANALYSIS_VERSION) return false
-  // Keep audio analysis for gaps and risky labels instead of decoding every
-  // already-confident sample on each algorithm version.
-  return needsAudioKey(s) || needsAudioBpm(s) || needsAudioClassification(s)
+  const wants =
+    needsWaveformPeaks(s) || needsAudioKey(s) || needsAudioBpm(s) || needsAudioClassification(s)
+  if (!wants) return false
+  // A prior decode/analysis failure retries only once the pipeline has advanced since
+  // the failure was recorded — so an update re-attempts broken files without thrashing.
+  if (s.analysisError) return (s.errorVersion ?? 0) < PIPELINE_VERSION
+  return true
 }
 
 function keySnapshot(s: Sound): KeyDecisionSnapshot {
@@ -266,6 +300,24 @@ export class Store {
       }
       if (s.analysisError === undefined) {
         s.analysisError = null
+        migrated = true
+      }
+      // Legacy sounds predate per-capability versioning: leave them at 0 (absent) so
+      // each step re-runs once under the new scheme, then tracks itself going forward.
+      if (s.keyVersion === undefined) {
+        s.keyVersion = null
+        migrated = true
+      }
+      if (s.bpmVersion === undefined) {
+        s.bpmVersion = null
+        migrated = true
+      }
+      if (s.typeVersion === undefined) {
+        s.typeVersion = null
+        migrated = true
+      }
+      if (s.errorVersion === undefined) {
+        s.errorVersion = null
         migrated = true
       }
       if (s.waveformVersion === undefined) {
@@ -419,6 +471,10 @@ export class Store {
         analyzedAt: null,
         analysisVersion: null,
         analysisError: null,
+        keyVersion: null,
+        bpmVersion: null,
+        typeVersion: null,
+        errorVersion: null,
         waveformPeaks: null,
         waveformVersion: null,
         needsAudioAnalysis: false,
@@ -448,6 +504,10 @@ export class Store {
       existing.analyzedAt = null
       existing.analysisVersion = null
       existing.analysisError = null
+      existing.keyVersion = null
+      existing.bpmVersion = null
+      existing.typeVersion = null
+      existing.errorVersion = null
       existing.waveformPeaks = null
       existing.waveformVersion = null
     }
@@ -537,6 +597,10 @@ export class Store {
       s.analysisError = null
       s.analyzedAt = null
       s.analysisVersion = null
+      s.keyVersion = null
+      s.bpmVersion = null
+      s.typeVersion = null
+      s.errorVersion = null
     }
     s.needsAudioAnalysis = computeNeedsAnalysis(s)
     this.scheduleSave()
@@ -547,8 +611,13 @@ export class Store {
     for (const r of results) {
       const s = this.byId.get(r.id)
       if (!s) continue
-      if (r.error) s.analysisError = r.error
-      else s.analysisError = null
+      if (r.error) {
+        s.analysisError = r.error
+        s.errorVersion = PIPELINE_VERSION
+      } else {
+        s.analysisError = null
+        s.errorVersion = null
+      }
       if (r.key && s.keySource !== 'manual') {
         const previous = keySnapshot(s)
         const candidate = resultKeySnapshot(r.key)
@@ -619,13 +688,22 @@ export class Store {
           }
         }
         if (keyDecision) s.keyDiagnostics = withKeyDecision(r.key.diagnostics, keyDecision)
+        // The key step ran at the current algorithm version (whether it found a key or
+        // not), so don't re-attempt this sound's key until KEY_VERSION advances again.
+        s.keyVersion = KEY_VERSION
       }
-      if (r.bpm && r.bpm.value != null && s.bpm == null && s.bpmSource !== 'manual') {
-        s.bpm = r.bpm.value
-        s.bpmConfidence = r.bpm.confidence
-        s.bpmSource = 'analysis'
+      if (r.bpm) {
+        s.bpmVersion = BPM_VERSION
+        if (r.bpm.value != null && s.bpm == null && s.bpmSource !== 'manual') {
+          s.bpm = r.bpm.value
+          s.bpmConfidence = r.bpm.confidence
+          s.bpmSource = 'analysis'
+        }
       }
-      if (r.cls && s.typeSource !== 'manual') applyClassification(s, r.cls)
+      if (r.cls && s.typeSource !== 'manual') {
+        applyClassification(s, r.cls)
+        s.typeVersion = CLASSIFY_VERSION
+      }
       if (r.peaks && r.peaks.version === CURRENT_WAVEFORM_VERSION && Array.isArray(r.peaks.values)) {
         const peaks = r.peaks.values.filter((v) => typeof v === 'number' && isFinite(v)).map((v) => Math.max(0, Math.min(1, v)))
         if (peaks.length >= 16) {
@@ -635,13 +713,17 @@ export class Store {
       }
       s.analyzedAt = Date.now()
       s.analysisVersion = CURRENT_ANALYSIS_VERSION
-      s.needsAudioAnalysis = false
+      // Recompute from the per-capability versions rather than forcing false: a partial
+      // result (e.g. peaks only) correctly leaves still-needed steps queued.
+      s.needsAudioAnalysis = computeNeedsAnalysis(s)
     }
     this.scheduleSave()
   }
 
   getAnalysisQueue(): Sound[] {
-    return this.data.sounds.filter((s) => s.needsAudioAnalysis && !s.missing)
+    return this.data.sounds
+      .filter((s) => s.needsAudioAnalysis && !s.missing)
+      .sort((a, b) => analysisPriority(a) - analysisPriority(b) || a.id - b.id)
   }
 
   /** Mark sounds under a source whose paths are no longer present as missing. */

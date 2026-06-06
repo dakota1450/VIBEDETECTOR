@@ -69,7 +69,7 @@ interface AppStore {
 export const useStore = create<AppStore>((set, get) => ({
   sources: [],
   sounds: [],
-  scan: { phase: 'idle', found: 0, processed: 0, total: 0, analyzing: 0, currentFile: null },
+  scan: { phase: 'idle', found: 0, processed: 0, total: 0, analyzing: 0, analyzeTotal: 0, currentFile: null },
   filter: defaultFilter,
   selection: [],
   player: { playingId: null, isPlaying: false, volume: DEFAULT_VOLUME, loop: false, seekNonce: 0 },

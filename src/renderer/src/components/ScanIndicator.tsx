@@ -8,7 +8,17 @@ export function ScanIndicator(): JSX.Element | null {
 
   if (!active && scan.analyzing === 0) return null
 
-  const pct = scan.total > 0 ? Math.round((scan.processed / scan.total) * 100) : 0
+  const analyzeTotal = scan.analyzeTotal || scan.analyzing
+  const analyzeDone = Math.max(0, analyzeTotal - scan.analyzing)
+  const pct =
+    scan.phase === 'scanning'
+      ? scan.total > 0
+        ? Math.round((scan.processed / scan.total) * 100)
+        : 0
+      : analyzeTotal > 0
+        ? Math.round((analyzeDone / analyzeTotal) * 100)
+        : 0
+  const showBar = scan.phase === 'scanning' || analyzingOnly
 
   return (
     <div className="no-drag flex items-center gap-2.5 rounded-full bg-white/5 px-3 py-1.5 border border-white/8">
@@ -17,17 +27,17 @@ export function ScanIndicator(): JSX.Element | null {
       </span>
       <div className="flex flex-col leading-tight">
         <span className="text-[11px] font-semibold text-white/80">
-          {scan.phase === 'scanning' ? 'Detecting vibe…' : analyzingOnly ? 'Analyzing audio…' : 'Up to date'}
+          {scan.phase === 'scanning' ? 'Detecting vibe…' : analyzingOnly ? 'Updating library…' : 'Up to date'}
         </span>
         <span className="text-[10px] text-white/45 tabular-nums">
           {scan.phase === 'scanning'
             ? `${scan.processed}/${scan.total}${scan.currentFile ? ` · ${scan.currentFile}` : ''}`
             : scan.analyzing > 0
-              ? `${scan.analyzing} sound${scan.analyzing > 1 ? 's' : ''} in the lab`
+              ? `${analyzeDone.toLocaleString()}/${analyzeTotal.toLocaleString()} sounds`
               : ''}
         </span>
       </div>
-      {scan.phase === 'scanning' && (
+      {showBar && (
         <div className="h-1 w-16 overflow-hidden rounded-full bg-white/10">
           <div className="h-full rounded-full bg-vibe transition-all" style={{ width: `${pct}%` }} />
         </div>

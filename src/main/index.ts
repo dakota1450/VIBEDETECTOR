@@ -66,7 +66,7 @@ function existingIndexedSound(path: unknown): Sound | null {
 }
 
 // ---- scan progress ----
-let scan: ScanProgress = { phase: 'idle', found: 0, processed: 0, total: 0, analyzing: 0, currentFile: null }
+let scan: ScanProgress = { phase: 'idle', found: 0, processed: 0, total: 0, analyzing: 0, analyzeTotal: 0, currentFile: null }
 
 function emitScan(): void {
   mainWindow?.webContents.send('scan:progress', scan)
@@ -74,8 +74,15 @@ function emitScan(): void {
 function emitSoundsChanged(): void {
   mainWindow?.webContents.send('sounds:changed')
 }
+// Baseline size of the current analysis pass, so the UI can show a determinate
+// "1,240 / 3,888" bar instead of a count that only ticks down and looks stuck.
+let analyzeBatchTotal = 0
 function refreshAnalyzing(): void {
-  scan.analyzing = store.getAnalysisQueue().length
+  const remaining = store.getAnalysisQueue().length
+  if (remaining === 0) analyzeBatchTotal = 0
+  else if (remaining > analyzeBatchTotal) analyzeBatchTotal = remaining // new pass or more work arrived
+  scan.analyzing = remaining
+  scan.analyzeTotal = analyzeBatchTotal
 }
 
 let soundsChangedTimer: ReturnType<typeof setTimeout> | null = null
@@ -93,7 +100,7 @@ let scanning = false
 async function runScan(sources: Source[]): Promise<void> {
   if (scanning || sources.length === 0) return
   scanning = true
-  scan = { phase: 'scanning', found: 0, processed: 0, total: 0, analyzing: scan.analyzing, currentFile: null }
+  scan = { phase: 'scanning', found: 0, processed: 0, total: 0, analyzing: scan.analyzing, analyzeTotal: scan.analyzeTotal, currentFile: null }
   emitScan()
   try {
     await scanSources(store, sources, {
@@ -279,7 +286,8 @@ function registerIpc(): void {
         needsKey,
         needsBpm: needsAudioBpm(s),
         classifyDrum: classifyDrum || (needsKey && s.type === 'drum'),
-        needsPeaks
+        needsPeaks,
+        isDrum: s.type === 'drum'
       }
     })
   )

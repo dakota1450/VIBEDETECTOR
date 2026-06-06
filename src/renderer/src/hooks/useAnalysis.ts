@@ -3,26 +3,32 @@ import type { AnalysisJob, AnalysisResult } from '@shared/types'
 
 const ANALYSIS_SAMPLE_RATE = 22050
 const MAX_SECONDS = 30
-const ANALYSIS_BATCH_SIZE = 12
-const ANALYSIS_CONCURRENCY = 1
-const ANALYSIS_JOB_PAUSE_MS = 25
-const ANALYSIS_BATCH_PAUSE_MS = 150
+const ANALYSIS_BATCH_SIZE = 24
+const ANALYSIS_JOB_PAUSE_MS = 8
+const ANALYSIS_BATCH_PAUSE_MS = 60
 const ANALYSIS_JOB_TIMEOUT_MS = 30000
+const DECODE_TIMEOUT_MS = 20000
+// Spread decoding + DSP across cores. One worker per slot, each with its own decode
+// context, so several samples are analyzed at once instead of one-at-a-time.
+const ANALYSIS_POOL_SIZE = Math.max(1, Math.min(4, ((globalThis.navigator?.hardwareConcurrency ?? 4) - 1)))
 const NORMALIZE_PEAK = 0.95
 const NORMALIZE_FLOOR = 0.0005
 const WAVEFORM_VERSION = 1
 const WAVEFORM_BUCKETS = 48
 
+interface AnalysisSlot {
+  worker: Worker
+  ctx: OfflineAudioContext
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let i = 0
-  const workers = Array.from({ length: Math.min(limit, items.length || 1) }, async () => {
-    while (i < items.length) await fn(items[i++])
-  })
-  await Promise.all(workers)
+/** Resolve to null if a promise doesn't settle in time — a corrupt file that hangs
+ *  the audio decoder must not stall the whole analysis queue. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))])
 }
 
 async function decodeMono(
@@ -104,28 +110,31 @@ function resampleLinear(samples: Float32Array, fromRate: number, toRate: number)
  * marked analyzed (even on decode error) so nothing is retried forever.
  */
 export function useAnalysis(): () => void {
-  const workerRef = useRef<Worker | null>(null)
-  const ctxRef = useRef<OfflineAudioContext | null>(null)
+  const slotsRef = useRef<AnalysisSlot[]>([])
   const runningRef = useRef(false)
 
   useEffect(() => {
-    const worker = new Worker(new URL('../analysis/analysis.worker.ts', import.meta.url), { type: 'module' })
-    workerRef.current = worker
+    const slots: AnalysisSlot[] = []
+    for (let i = 0; i < ANALYSIS_POOL_SIZE; i++) {
+      slots.push({
+        worker: new Worker(new URL('../analysis/analysis.worker.ts', import.meta.url), { type: 'module' }),
+        ctx: new OfflineAudioContext(1, 1, ANALYSIS_SAMPLE_RATE)
+      })
+    }
+    slotsRef.current = slots
     return () => {
-      worker.terminate()
-      workerRef.current = null
+      for (const s of slots) s.worker.terminate()
+      slotsRef.current = []
     }
   }, [])
 
-  const analyzeJob = useCallback(async (job: AnalysisJob): Promise<AnalysisResult> => {
-    const worker = workerRef.current
-    if (!worker) return { id: job.id }
-    if (!ctxRef.current) ctxRef.current = new OfflineAudioContext(1, 1, ANALYSIS_SAMPLE_RATE)
+  const analyzeJob = useCallback(async (job: AnalysisJob, slot: AnalysisSlot): Promise<AnalysisResult> => {
     try {
-      const decoded = await decodeMono(ctxRef.current, job.url)
+      const decoded = await withTimeout(decodeMono(slot.ctx, job.url), DECODE_TIMEOUT_MS)
       if (!decoded || decoded.samples.length === 0) return { id: job.id, error: 'decode_failed' }
       const peaks = job.needsPeaks ? { values: decoded.peaks, version: WAVEFORM_VERSION } : undefined
       if (!job.needsKey && !job.needsBpm && !job.classifyDrum) return { id: job.id, peaks }
+      const worker = slot.worker
       return await new Promise<AnalysisResult>((resolve) => {
         const onMsg = (e: MessageEvent<AnalysisResult>): void => {
           if (e.data.id !== job.id) return
@@ -146,7 +155,8 @@ export function useAnalysis(): () => void {
             sampleRate: decoded.sampleRate,
             needsKey: job.needsKey,
             needsBpm: job.needsBpm,
-            classifyDrum: job.classifyDrum
+            classifyDrum: job.classifyDrum,
+            isDrum: job.isDrum
           },
           [buffer]
         )
@@ -167,12 +177,22 @@ export function useAnalysis(): () => void {
         while (true) {
           const jobs = await window.api.getAnalysisQueue()
           if (jobs.length === 0) break
+          const slots = slotsRef.current
+          if (slots.length === 0) break
           const batch = jobs.slice(0, ANALYSIS_BATCH_SIZE)
           const results: AnalysisResult[] = []
-          await pool(batch, ANALYSIS_CONCURRENCY, async (job) => {
-            results.push(await analyzeJob(job))
-            await delay(ANALYSIS_JOB_PAUSE_MS)
-          })
+          let next = 0
+          // Every worker slot pulls the next job until the batch drains, so several
+          // samples decode + analyze concurrently across cores.
+          await Promise.all(
+            slots.map(async (slot) => {
+              while (next < batch.length) {
+                const job = batch[next++]
+                results.push(await analyzeJob(job, slot))
+                await delay(ANALYSIS_JOB_PAUSE_MS)
+              }
+            })
+          )
           await window.api.saveAnalysis(results)
           await delay(ANALYSIS_BATCH_PAUSE_MS)
         }

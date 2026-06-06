@@ -172,7 +172,7 @@ describe('Store hardening', () => {
     expect(updated.keySource).toBeNull()
   })
 
-  it('persists waveform peaks from analysis and stops queueing peak-only jobs', async () => {
+  it('persists waveform peaks and stops queueing once every capability is current', async () => {
     const store = new Store(join(tmpdir(), `vibe-store-peaks-${Date.now()}.json`))
     await store.load()
     const source = store.addSource('/tmp/samples', 'Samples')
@@ -180,12 +180,50 @@ describe('Store hardening', () => {
     expect(store.getAnalysisQueue().map((s) => s.id)).toContain(sound.id)
 
     const values = Array.from({ length: 48 }, (_, i) => i / 47)
-    store.saveAnalysis([{ id: sound.id, peaks: { values, version: 1 } }])
+    // A real job decodes once and returns every needed step together; the store should
+    // record each capability's version and drop the sound from the queue.
+    store.saveAnalysis([
+      {
+        id: sound.id,
+        key: { tonic: null, mode: null, confidence: 0 },
+        bpm: { value: null, confidence: 0 },
+        cls: { type: 'melodic', subtype: 'loop', confidence: 0.8 },
+        peaks: { values, version: 1 }
+      }
+    ])
     const updated = store.getSound(sound.id)!
     expect(updated.waveformPeaks).toEqual(values)
     expect(updated.waveformVersion).toBe(1)
     expect(updated.analysisError).toBeNull()
     expect(updated.needsAudioAnalysis).toBe(false)
+  })
+
+  it('only re-runs the capability whose version advanced, not the whole sound', async () => {
+    const store = new Store(join(tmpdir(), `vibe-store-cap-${Date.now()}.json`))
+    await store.load()
+    const source = store.addSource('/tmp/samples', 'Samples')
+    const sound = store.upsert(record('/tmp/samples/loop.wav', source.id))
+
+    const values = Array.from({ length: 48 }, (_, i) => i / 47)
+    store.saveAnalysis([
+      {
+        id: sound.id,
+        key: { tonic: 'C', mode: 'minor', confidence: 0.8 },
+        bpm: { value: 120, confidence: 0.7 },
+        cls: { type: 'melodic', subtype: 'loop', confidence: 0.8 },
+        peaks: { values, version: 1 }
+      }
+    ])
+    const done = store.getSound(sound.id)!
+    expect(done.needsAudioAnalysis).toBe(false)
+    expect(done.keyVersion).toBe(1)
+    expect(done.bpmVersion).toBe(1)
+    expect(done.typeVersion).toBe(1)
+
+    // Simulate a key-algorithm update: the key step is stale again, the rest is not.
+    done.keyVersion = 0
+    done.needsAudioAnalysis = true
+    expect(needsAudioKey(done)).toBe(true)
   })
 
   it('records analysis failures instead of retrying silently forever', async () => {
