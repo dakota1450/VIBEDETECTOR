@@ -3,7 +3,7 @@ import { detectKeyFromName } from './keyDetect'
 import { detectBpmFromName, bpmMatches } from './bpmDetect'
 import { classify } from './classify'
 import { normalizeTonic, hueForTonic, keyColor, pitchIndex } from './keyColors'
-import { keyToCamelot } from './camelot'
+import { compatibleKeys, keyToCamelot } from './camelot'
 import { formatKey } from './format'
 
 describe('detectKeyFromName', () => {
@@ -184,5 +184,81 @@ describe('keyColors & camelot', () => {
     expect(formatKey('C#', 'minor')).toBe('C♯m')
     expect(formatKey('F', 'major')).toBe('F')
     expect(formatKey(null, null)).toBe('—')
+  })
+})
+
+describe('filename keys: pack codes are not flats', () => {
+  it('ignores all-caps pack prefixes that look like flats (AB_, BB3_, CB2_, DBM_)', () => {
+    expect(detectKeyFromName('AB_IND_Toby_Schay_160_Guitar_Loop_Honey_F#.wav').tonic).toBe('F#')
+    expect(detectKeyFromName('BB3_snare_waffle.wav').tonic).toBeNull()
+    expect(detectKeyFromName('AHA_CB2_65_electric_guitar_rhythm_loop_the_river_C.wav').tonic).toBe('C')
+    const k = detectKeyFromName('DBM_RF2_72_Piano_Loop_Luxury_Dmin.wav')
+    expect(k.tonic).toBe('D')
+    expect(k.mode).toBe('minor')
+  })
+
+  it('still reads real flat spellings', () => {
+    expect(detectKeyFromName('Lead_Bbm_128.wav')).toMatchObject({ tonic: 'A#', mode: 'minor' })
+    expect(detectKeyFromName('pad_ebmaj.wav')).toMatchObject({ tonic: 'D#', mode: 'major' })
+    expect(detectKeyFromName('Keys_Db_Major.wav')).toMatchObject({ tonic: 'C#', mode: 'major' })
+  })
+
+  it('reads a capital M as major in a mixed-case name', () => {
+    expect(detectKeyFromName('synth_chords_low_A#M.wav')).toMatchObject({ tonic: 'A#', mode: 'major' })
+    expect(detectKeyFromName('synth_chords_low_A#m.wav')).toMatchObject({ tonic: 'A#', mode: 'minor' })
+  })
+
+  it('prefers the key written last when two are equally explicit', () => {
+    expect(detectKeyFromName('Dbm_-_Bamboo_Forrest_-_Flute_80Bpm_a#_min.wav')).toMatchObject({ tonic: 'A#', mode: 'minor' })
+  })
+})
+
+describe('filename tempo checked against the loop length', () => {
+  it('trusts a bare number that cuts the loop into whole beats', () => {
+    // 75 BPM × 12.8 s = 16 beats exactly.
+    const t = detectBpmFromName('SLS_BV_75_guitar_lead_sunrise_Cmaj.wav', 12.8)
+    expect(t.bpm).toBe(75)
+    expect(t.confidence).toBeGreaterThanOrEqual(0.9)
+  })
+
+  it('demotes a bare number that does not fit the loop length', () => {
+    const t = detectBpmFromName('Guitar_Take_75.wav', 9.31)
+    expect(t.bpm).toBe(75)
+    expect(t.confidence).toBeLessThan(0.7)
+  })
+
+  it('picks the number that fits when several are present', () => {
+    // 2 bars at 92 BPM = 5.217 s; "128" is a variation number.
+    expect(detectBpmFromName('Loop_128_92_Drums.wav', (8 * 60) / 92).bpm).toBe(92)
+  })
+
+  it('keeps explicit bpm tags regardless of length', () => {
+    expect(detectBpmFromName('beat_140bpm.wav', 3.33)).toMatchObject({ bpm: 140, confidence: 0.98 })
+  })
+
+  it('treats a number on a one-shot as at most the kit tempo', () => {
+    expect(detectBpmFromName('808_F#_140.wav', 0.6).confidence).toBeLessThan(0.5)
+  })
+})
+
+describe('classify: drum loops are loops, not one-shots', () => {
+  it('gives generic drum loops / breaks the loop subtype', () => {
+    expect(classify({ filename: 'Dusty Break.wav', folder: 'Drum Loops' })).toEqual({ type: 'drum', subtype: 'loop' })
+    expect(classify({ filename: 'groove_04.wav', folder: 'Drums' })).toEqual({ type: 'drum', subtype: 'loop' })
+  })
+  it('keeps an instrument-specific drum loop on its instrument', () => {
+    expect(classify({ filename: 'Shaker_Loop_100.wav', folder: 'Drum Loops' }).subtype).toBe('perc')
+  })
+  it('keeps generic drum hits generic', () => {
+    expect(classify({ filename: 'Drum_Hit_01.wav', folder: 'Drums' })).toEqual({ type: 'drum', subtype: 'other' })
+  })
+})
+
+describe('camelot compatible keys', () => {
+  it('returns the key, its relative and its ±1 neighbours', () => {
+    const am = compatibleKeys('A', 'minor').map((k) => `${k.tonic}${k.mode === 'minor' ? 'm' : ''}`)
+    expect(am).toEqual(['Am', 'C', 'Dm', 'Em']) // 8A → 8B, 7A, 9A
+    const b = compatibleKeys('B', 'major').map((k) => `${k.tonic}${k.mode === 'minor' ? 'm' : ''}`)
+    expect(b).toEqual(['B', 'G#m', 'E', 'F#']) // 1B → 1A, 12B (wraps), 2B
   })
 })

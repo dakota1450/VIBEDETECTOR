@@ -5,6 +5,7 @@ export type DetectionSource = 'filename' | 'metadata' | 'analysis' | 'manual'
 export type SoundType = 'drum' | 'melodic' | 'unknown'
 
 export type DrumSubtype =
+  | 'loop'
   | 'kick'
   | 'snare'
   | 'clap'
@@ -82,6 +83,12 @@ export interface KeyDecisionDiagnostics {
   evidence?: KeyEvidenceItem[]
 }
 
+export interface KeyCandidate {
+  tonic: string
+  mode: KeyMode
+  p: number
+}
+
 export interface DetectedTempo {
   bpm: number | null
   confidence: number // 0..1
@@ -111,10 +118,14 @@ export interface Sound {
   keyConfidence: number
   keySource: DetectionSource | null
   keyDiagnostics?: KeyDecisionDiagnostics | null
+  /** Audio analysis' most likely keys (with probabilities), for one-click correction. */
+  keyCandidates?: KeyCandidate[] | null
 
   bpm: number | null
   bpmConfidence: number
   bpmSource: DetectionSource | null
+  /** Half/double-time readings of the detected tempo, for one-click correction. */
+  bpmAlternatives?: number[] | null
 
   type: SoundType
   subtype: Subtype | null
@@ -139,6 +150,8 @@ export interface Sound {
   errorVersion?: number | null
   waveformPeaks?: number[] | null
   waveformVersion?: number | null
+  /** Version of the filename parsers this sound's name was last read with. */
+  nameVersion?: number | null
   needsAudioAnalysis: boolean
   missing: boolean
 }
@@ -169,6 +182,8 @@ export interface LibraryFilter {
   subtypes: Subtype[]
   keys: { tonic: string; mode: KeyMode }[]
   matchKeyAnyMode: boolean
+  /** Also match harmonically compatible keys (Camelot ±1 and relative). */
+  harmonicMatch?: boolean
   keyStatus: 'all' | 'unknown' | 'low' | 'verified'
   reviewStatus: 'all' | 'needs_review' | 'analysis_failed'
   bpmMin: number | null
@@ -193,8 +208,14 @@ export interface SoundOverride {
 
 export interface AnalysisResult {
   id: number
-  key?: { tonic: string | null; mode: KeyMode | null; confidence: number; diagnostics?: KeyDecisionDiagnostics }
-  bpm?: { value: number | null; confidence: number }
+  key?: {
+    tonic: string | null
+    mode: KeyMode | null
+    confidence: number
+    candidates?: KeyCandidate[]
+    diagnostics?: KeyDecisionDiagnostics
+  }
+  bpm?: { value: number | null; confidence: number; alternatives?: number[]; method?: string | null }
   cls?: { type: SoundType; subtype: Subtype | null; confidence: number }
   peaks?: { values: number[]; version: number }
   error?: string
@@ -210,6 +231,22 @@ export interface AnalysisJob {
   // The sound's current type is a drum, so the worker should attempt a key even on
   // low-confidence/percussive material (and save it flagged) rather than veto it.
   isDrum?: boolean
+  /** Current subtype (hats/claps need a much clearer pitch than tuned drums). */
+  subtype?: Subtype | null
+}
+
+/** What the renderer posts to an analysis worker. */
+export interface WorkerJobMessage {
+  id: number
+  buffer: ArrayBuffer
+  sampleRate: number
+  /** Exact length of the whole file in seconds (the buffer may be truncated). */
+  durationSec: number | null
+  needsKey: boolean
+  needsBpm: boolean
+  classifyDrum: boolean
+  isDrum?: boolean
+  subtype?: Subtype | null
 }
 
 // The API surface exposed to the renderer via the preload contextBridge.

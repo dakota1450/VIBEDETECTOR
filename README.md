@@ -1,52 +1,72 @@
-# 🛰️ Vibe Detector
+# Vibe Detector
 
 **Detect the vibe of every sound.** A local-first desktop app for music producers that scans your
-sample folders, figures out the **musical key**, **tempo (BPM)**, and **type** (drum one-shot vs.
-melodic sample) of every sound, and lets you filter, preview, and **drag straight into your DAW** —
-all offline, nothing leaves your machine.
+sample folders, figures out the **musical key**, **tempo (BPM)** and **type** (drum vs. melodic,
+kick / 808 / loop / pad …) of every sound, and lets you filter, preview and **drag straight into your
+DAW** — all offline; nothing leaves your machine.
 
-Current release: **0.4.0**. This is the trust-and-review release: key detection is now benchmarked,
-audio analysis stores structured diagnostics, rows render cached real waveform peaks, and low-confidence
-or failed analysis results are easier to review and correct.
+Current release: **0.5.0 — Measured Detection.** Key and tempo detection were rebuilt and, for the
+first time, *measured* on 10,817 producer-labelled samples (see [Accuracy](#accuracy)).
 
 ![Vibe Detector](docs/screenshot.png)
 
 ## Features
 
-- **Folder ingestion** — add one or many sample folders; they're scanned recursively
-  (`.wav .aif .aiff .flac .mp3 .ogg .m4a`) and watched for changes.
-- **Key detection** — filename first (`Cmin`, `F#maj`, `Bbm`, Camelot `8A`, octave notes like `C4`,
-  contextual tags like `Kick_C` / `808 F`), then embedded metadata, then pure-TypeScript audio
-  analysis. Loops and chords use FFT chroma + Krumhansl–Schmuckler; tuned one-shots and drums use a
-  pitch-class pass with confidence guards. Atonal/noisy material stays **Unknown**.
-- **Tempo detection** — filename/metadata first (`140bpm`, `[174]`), audio autocorrelation fallback,
-  with **half/double-time** matching in the filter.
-- **Type & subtype classification** — drum one-shots (kick, snare, hi-hat, open hat, clap, 808, perc,
-  cymbal, tom, fx) and melodic samples (loop, one-shot, stab, chord, pad, lead, pluck, bass, guitar,
-  piano, synth, keys, strings, brass, winds, mallet, vocal, arp), from filename + folder + duration +
-  tempo.
-- **Audio-verified drums** — a worker analyzes the actual sound (pitch class, chroma, spectral
-  centroid, zero-crossing rate, band energy, decay, tonality) to detect tuned drums, refine drum
-  subtypes, and catch filename mislabels. It keeps the more-specific filename label within a family
-  (won't flatten "Open Hat" to "Hi-Hat") and fixes cross-family errors (a "kick" that's really a hat,
-  or a sustained tone mislabeled as a drum).
-- **Trust and review workflow** — key badges expose source/confidence, low-confidence and unknown keys
-  can be filtered, failed analysis is visible and retryable, and the detail panel records why an audio
-  key candidate was accepted, rejected, updated, or cleared.
-- **Key = color** — every key is mapped to a hue around the **circle of fifths**; the interactive
-  wheel is both the signature visual and the key filter.
-- **Fast browsing** — virtualized list, search, filter by key / type / subtype / tempo / favorites,
-  review status, sort by name / key / tempo / duration / date, with cached decoded row waveforms.
-- **Instant preview** — click to audition with a real waveform, scrub, loop, volume; spacebar +
-  arrow keys for keyboard auditioning.
-- **Drag into your DAW** — drag one or many sounds out as real files (Electron `startDrag`).
-- **Edit & organize** — favorite, manually correct key/tempo/type (overrides persist across
-  rescans), batch-correct selected sounds, tag, add notes, reveal in Finder.
-- **Vibe Match** — selected sounds surface nearby key/tempo companions for quick layering ideas.
+- **Folder ingestion** — add sample folders; they're scanned recursively
+  (`.wav .aif .aiff .flac .mp3 .ogg .m4a`) and watched for changes. Reopening only re-reads new or
+  changed files.
+- **Tempo detection** — producer tags first (`140bpm`, `_92_`, metadata), then the audio. Loops are
+  cut to whole bars, so Vibe Detector scores the few tempos the file's exact length allows against the
+  audio's pulse and **locks the BPM to the loop's own bar grid** — exact, not approximate. Drum loops included;
+  one-shots, pads and risers don't get a fake tempo. Half/double-time readings are one click away.
+- **Key detection** — producer tags first (`Cmin`, `F#maj`, `Bbm`, Camelot `8A`, `808 F`), then a
+  learned audio model. Every key carries a **calibrated confidence** (when it says 80%+, it's right
+  about 85% of the time) and its runner-up keys, so a wrong guess is one click from right. Single
+  notes, 808s and power chords get a root without a made-up major/minor; hats and claps stay keyless.
+- **Type & subtype** — drum (kick, snare, hi-hat, open hat, clap, 808, perc, cymbal, tom, loop, fx)
+  or melodic (loop, one-shot, stab, chord, pad, lead, pluck, bass, keys, guitar, piano, synth,
+  strings, brass, winds, mallet, vocal, arp) from the name and folder, with the audio deciding when
+  the name says nothing.
+- **Key = color** — every key maps to a hue around the **circle of fifths**. The interactive wheel is
+  the key filter *and* a map of your library: brighter segments hold more sounds. Turn on
+  **Compatible keys** to widen a selection to its Camelot neighbours and relative key.
+- **Fast browsing** — virtualized list, search, filters for key / type / tempo (with ½×/2×) /
+  favorites / review status, sorting by name / key / tempo / duration / date, cached waveforms.
+- **Instant preview** — real waveform, scrub, loop, volume; spacebar + arrow keys to audition.
+- **Drag into your DAW** — drag one or many sounds out as real files.
+- **Edit & organize** — manual key / tempo / type corrections (they always win and survive rescans),
+  batch edits, tags, notes, favorites, reveal in Finder, and a review queue for low-confidence or
+  failed analysis.
+- **Vibe Match** — nearby key/tempo companions for the selected sound.
+
+## Accuracy
+
+Audio-only accuracy (filenames ignored), measured with the code that ships, on sample packs the
+models never saw during training (5 folds grouped by pack, 10,817 Splice samples, producer labels):
+
+| Audio-only, on held-out packs | 0.4.0 | 0.5.0 |
+| --- | --- | --- |
+| Loops — exact BPM | 7.2% | **80.6%** |
+| Loops — BPM within 4% | 36.6% | **80.9%** |
+| Loops — BPM, half/double time allowed | 51.5% | **93.5%** |
+| Drum loops — exact BPM | 9.8% | **84.4%** |
+| One-shots given a (wrong) tempo | 18.0% | **2.5%** |
+| Loops — a key is named | 76.4% | **90.9%** |
+| Loops — right key root, when named | 44.8% | **58.0%** |
+| Loops — exact key, all mode-labelled loops | 25.1% | **51.9%** |
+| Loops — right key among the top 3 suggestions | — | **81.0%** |
+| One-shots — right root, when named | 64.5% | **72.5%** |
+| Bass & 808 one-shots — right note, when named | — | **88.3%** |
+
+Confidence is calibrated: loop tempos read at ≥85% confidence (6 in 10 loops) are right 94.6% of
+the time; keys read at ≥80% are right 84.8% of the time.
+
+With producer tags in the name (the common case for pack samples), filename keys are ~99% and
+loop-length-checked filename tempos ~99.8% accurate; the audio fills gaps and repairs weak tags.
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS (Apple Silicon or Intel) or Windows 10+
 - Node.js 20+ (built and tested on Node 26)
 
 ## Getting started
@@ -56,8 +76,8 @@ npm install
 npm run dev        # launch in development (hot reload)
 ```
 
-Click **Add sample folders** (or the sidebar **Add** button) to pick folders. Vibe Detector scans
-them, detects key/tempo/type, and fills the library while you browse.
+Click **Add sample folders** (or the sidebar **Add** button). Vibe Detector scans them, detects
+key / tempo / type, and fills in the library while you browse.
 
 ### Scripts
 
@@ -66,110 +86,107 @@ them, detects key/tempo/type, and fills the library while you browse.
 | `npm run dev` | Run the app with hot reload |
 | `npm run build` | Production build into `out/` |
 | `npm run preview` | Run the production build |
-| `npm test` | Run the unit + integration test suite (Vitest) |
+| `npm test` | Unit + integration tests (Vitest) |
 | `npm run typecheck` | Type-check main + renderer |
-| `npm run benchmark:key` | Run the bundled key-detection benchmark |
-| `npm run dist` | Build shareable macOS (universal dmg+zip) **and** Windows (zip) into `dist/` |
-| `npm run dist:mac` / `npm run dist:win` | Build just one platform |
+| `npm run benchmark:key` | Filename key-parsing benchmark (embedded fixtures) |
+| `npm run eval` | Score the audio analyzers on a labelled library (see [Evaluation](#evaluation)) |
+| `npm run dist` | Build macOS (universal dmg+zip) **and** Windows (zip) into `dist/` |
+| `npm run dist:mac` / `npm run dist:win` | Build one platform |
+| `npm run site` | Serve the marketing site at http://localhost:4178 |
 
-See **Sharing the app** below for distributable builds.
+## How detection works
+
+```
+src/shared/
+  analysisJob.ts       one analysis pass (worker + eval harness run exactly this)
+  tempo.ts             onset envelopes → periodicity → loop-grid + audio candidates → learned ranker
+  tempoModel.ts        trained ranker weights          tempoPresenceModel.ts  "has a tempo?" gate
+  keyFeatures.ts       tuned spectral peaks → chroma profiles, chord roots, first chord, variety
+  keyClassifier.ts     transposition-equivariant 24-key softmax     keyModel.ts  trained profiles
+  key.ts               decision rules: tonic, mode (needs a third), per-family thresholds
+  audioAnalysis.ts     active region, YIN pitch tracker, drum/melodic classifier
+  keyDetect.ts · bpmDetect.ts · classify.ts   filename / folder parsing
+```
+
+**Tempo.** A log-compressed mel-band spectral flux (SuperFlux-style, 172 frames/s) is computed for
+the full band and for low / mid / high bands, and its generalized autocorrelation gives the pulse.
+Producer loops are trimmed to whole bars, so the file's exact length admits only the tempos
+`60 · beats / duration`; those, the audio's own periodicity peaks and their ½× / 2× / 3:2 relatives
+become candidates. Each is described by ~70 features — periodicity at the beat / half-beat / bar
+lags, beat-grid phase at the loop start, how close the tempo is to a whole BPM, bar structure,
+32nd-note metrical profile, backbeat/kick placement, onsets per beat, and timbre × log-tempo
+interactions — and a conditional-logit ranker trained on 4,666 labelled loops picks one (it learns
+producers' half/double-time conventions). A logistic gate on the same evidence decides whether the
+sound has a tempo at all.
+
+**Key.** An 8192-point STFT (≈2.7 Hz bins at 22.05 kHz) passes through a 5-frame temporal median —
+sustained notes survive, drum hits don't — before parabolic-interpolated peak picking. A global
+tuning offset (circular mean of every partial's deviation from A440) re-centres the 84-semitone
+pitch spectrum. Frame-normalised (and tonal-prominence-weighted) chroma profiles are accumulated:
+treble, bass, harmonic salience (fundamental-weighted), lowest note, opening / closing quarter, the
+first chord on the loop's beat grid, and a chord-root histogram. A transposition-equivariant
+softmax — one learned profile per mode, shared by all twelve tonics, plus a second set for short,
+harmonically static sounds — turns them into probabilities over the 24 keys, used directly as the
+confidence. A YIN pitch tracker feeds the model for one-shots and tuned drums.
+
+**Merging.** Manual edits always win. Strong producer tags (filename/metadata) are trusted and only
+audio-checked when weak; an upgraded analyzer replaces its own older results. Each capability
+(key, tempo, type, waveform, filename parsing) is versioned, so an update re-runs only what changed,
+only where it can help, once.
+
+## Evaluation
+
+`scripts/eval/` is the toolkit that produced the numbers above. With a local Splice library:
+
+```bash
+node scripts/eval/dataset-from-splice.mjs --out /tmp/vibe-eval/manifest.json
+npm run eval -- --manifest /tmp/vibe-eval/manifest.json --out /tmp/vibe-eval/run.jsonl
+```
+
+`run-eval.mjs` decodes every WAV in pure JS (band-limited resampling matching the app's decoder),
+runs `analysisJob.ts` in a worker pool and prints key (MIREX-weighted) and tempo (exact / Acc1 /
+Acc2) metrics with calibration tables. `train_tempo.py`, `train_tempo_presence.py` and
+`train_key.py` retrain the models from feature dumps (pack-grouped cross-validation) and export the
+`*Model.ts` files; `holdout-eval.mjs` retrains per fold and runs the real pipeline on unseen packs.
 
 ## Sharing the app
 
-`npm run dist` produces installers in `dist/`:
-
-- **macOS** — `Vibe Detector-<version>-universal.dmg` (plus a `.zip`). Universal = runs on both Apple
-  Silicon and Intel Macs.
-- **Windows** — `Vibe Detector-<version>-x64.zip` — unzip and run `Vibe Detector.exe`.
-
-The builds are **unsigned** (no paid Apple/Microsoft certificate), so each OS warns on first open.
-That's expected for self-distributed apps; the one-time workaround:
-
-- **macOS (Gatekeeper):** right-click the app → **Open** → **Open**, or run
-  `xattr -dr com.apple.quarantine "/Applications/Vibe Detector.app"`.
-- **Windows (SmartScreen):** **More info** → **Run anyway**.
-
-For a warning-free experience, sign + notarize with an Apple Developer ID and a Windows code-signing
-certificate, then re-run `dist` (the config is signing-ready). The Windows `.exe` ships with the
-default Electron file icon — the in-app window/taskbar icon is correct; embedding the `.exe` icon
-requires building on Windows (or with Wine). macOS uses the full app icon.
+`npm run dist` produces installers in `dist/`: macOS `Vibe Detector-<version>-universal.dmg` (+ `.zip`)
+and Windows `Vibe Detector-<version>-x64.zip`. Builds are **unsigned**, so each OS warns on first
+open — on macOS right-click the app → **Open** (or `xattr -dr com.apple.quarantine "/Applications/Vibe Detector.app"`),
+on Windows **More info** → **Run anyway**. Signing-ready config: add an Apple Developer ID / Windows
+code-signing certificate and re-run `dist`.
 
 ## Marketing site
 
-A branded, animated landing page lives in `site/` and hands the installers in `dist/` straight to
-visitors:
-
-```bash
-npm run dist   # build the installers into dist/ (if you haven't already)
-npm run site   # serve the marketing page at http://localhost:4178
-```
-
-`scripts/serve-site.mjs` is a zero-dependency static server that also streams the `dist/` builds at
-`/downloads/<file>` (with HTTP Range support so the ~200 MB downloads are resumable) and exposes
-`/api/releases` — scanned live from `dist/` — so the page always advertises the current version,
-file sizes, and per-platform links. The page is built on the Vibe Detector design system
-(circle-of-fifths key colors, the radar motif, Inter + JetBrains Mono): an animated radar hero, the
-interactive key wheel, the detection grid, a local-first privacy panel, and OS-aware download cards.
-It works fully offline (icons are inline SVG; fonts fall back to system). Set `PORT` to change the
-port. Brand assets are copied into `site/assets/` from `resources/icon.png` and `docs/screenshot.png`.
-
-## How it works
-
-```
-src/
-  shared/        Pure, unit-tested logic (no Electron):
-                 keyDetect · bpmDetect · classify · audioAnalysis (FFT chroma,
-                 pitch-class detection, KS profiles + autocorrelation) ·
-                 keyDetectionBenchmark · keyColors
-  main/          Electron main process: window, vibe:// audio protocol, JSON store,
-                 recursive scanner + metadata (music-metadata), chokidar watcher, drag, IPC
-  preload/       Typed contextBridge API (window.api)
-  renderer/      React + Tailwind UI: circle-of-fifths wheel, virtualized grid, filters,
-                 wavesurfer player, detail/override panel, audio-analysis Web Worker
-```
-
-- **Detection order** (key & tempo): filename → embedded metadata → audio analysis fallback.
-  Manual overrides always win and survive rescans. Weak filename keys on drums are audio-checked.
-- **Audio analysis** runs for unlabeled or weak-key content, including drums: the file is decoded on
-  the renderer thread (downmixed/downsampled), waveform peaks are cached, then a Web Worker computes
-  the result so the UI stays responsive. Key diagnostics explain detector and store decisions.
-  Decode/worker failures are stored, shown in the review queue, and can be retried.
-- **Persistence** uses a pure-JS JSON store (atomic, debounced writes) behind a small repository
-  interface, so a native SQLite backend can drop in later without touching callers. Your library
-  (sources, detected keys/tempo/types, manual edits, cached row waveforms, audio-analysis diagnostics)
-  is saved to the app's user-data folder and **reloads instantly on launch** — reopening only scans
-  *new or changed* files (matched by path + size + modified-time), never re-scanning your whole
-  library. The store tracks `analysisVersion` and `waveformVersion`, so improved detection or peak
-  generation can re-run once without clobbering manual overrides.
+`site/` is the landing page (vanilla HTML/CSS/JS on the Vibe Detector design system: circle-of-fifths
+key colours, the radar mark, Inter + JetBrains Mono). `npm run site` serves it locally and streams
+the `dist/` installers; on GitHub Pages it reads the latest GitHub Release for its download cards.
+Brand assets: `scripts/make-icon.cjs` (app icon + site icon), `scripts/make-og-image.cjs` (social card).
 
 ## Testing
 
 ```bash
 npm test
-npm run benchmark:key
 ```
 
-Covers filename key/BPM parsing, tuned drum/key context parsing, melodic instrument labeling,
-classification, Camelot + color mapping, half/double-time matching, the FFT/Krumhansl–Schmuckler key
-estimator, tuned one-shot pitch detection, noisy drum rejection, and an **integration test that scans
-real generated WAV fixtures** end-to-end (`scripts/make-fixtures.mjs` writes them to `fixtures/`).
-
-`npm run benchmark:key` runs a lightweight key-detection benchmark against embedded synthetic
-filename fixtures. It reports accuracy, labeled-key coverage, precision, false-positive rate, and
-miss details without requiring external sample packs or generated audio files. The reusable evaluator
-lives in `src/shared/keyDetectionBenchmark.ts` for tests or future labeled fixture sets.
+Covers filename key / BPM / type parsing (incl. pack-code false positives and loop-length checks),
+Camelot and colour mapping, half/double-time and harmonic key filtering, the store's merge and
+re-analysis rules, synthetic audio regression suites for tempo (drum / house / chord loops, tails,
+one-shots, pads) and key (tuned drums, 808s, plucks, chords, progressions, phrases, noise), and an
+integration test that scans real WAV fixtures end-to-end.
 
 ## Developer / demo env vars
 
 | Variable | Purpose |
 | --- | --- |
-| `VIBE_DATA_DIR` | Use an isolated library directory instead of the default user-data path |
+| `VIBE_DATA_DIR` | Use an isolated library directory instead of the user-data path |
 | `VIBE_IMPORT_DIR` | Comma-separated folders to auto-import on launch (no dialog) |
-| `VIBE_SHOT` / `VIBE_SHOT_QUIT` | Capture the window to a PNG (via `capturePage`) and optionally quit |
-
-Example:
+| `VIBE_SHOT` / `VIBE_SHOT_DELAY` / `VIBE_SHOT_QUIT` | Capture the window to a PNG after a delay, then optionally quit |
+| `VIBE_SHOT_CLICK` | Select the nth row before capturing (shows the detail panel) |
+| `VIBE_SHOT_SCALE` | Render the capture at N× (e.g. `2` for Retina-sharp screenshots on any display) |
 
 ```bash
-node scripts/make-fixtures.mjs
-VIBE_DATA_DIR=/tmp/vibe VIBE_IMPORT_DIR="$PWD/fixtures" npm run preview
+node scripts/make-demo-library.mjs /tmp/vibe-demo
+VIBE_DATA_DIR=/tmp/vibe VIBE_IMPORT_DIR=/tmp/vibe-demo npm run preview
 ```

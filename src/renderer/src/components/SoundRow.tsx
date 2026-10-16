@@ -2,7 +2,7 @@ import { memo } from 'react'
 import type { DragEvent, MouseEvent } from 'react'
 import type { Sound } from '@shared/types'
 import { keyColor } from '@shared/keyColors'
-import { formatBpm, formatDuration } from '@shared/format'
+import { formatBpm, formatDuration, subtypeLabel } from '@shared/format'
 import { KeyBadge } from './KeyBadge'
 import { WaveBars } from './WaveBars'
 import { Play, Pause, Star, StarFilled } from './icons'
@@ -17,10 +17,13 @@ interface Props {
   onDragStart: (e: DragEvent, sound: Sound) => void
 }
 
-function typeChip(s: Sound): { label: string; cls: string } {
-  if (s.type === 'drum') return { label: 'Drums', cls: 'bg-amber-400/12 text-amber-200/90 border-amber-300/20' }
-  if (s.type === 'melodic') return { label: 'Melodic', cls: 'bg-violet-400/12 text-violet-200/90 border-violet-300/20' }
-  return { label: 'Unknown', cls: 'bg-white/5 text-white/45 border-white/10' }
+function typeChip(s: Sound): { label: string; cls: string; title: string } {
+  // Show the specific role (Kick, 808, Pad, Loop…) — far more useful when scanning a
+  // list than the drum/melodic family alone, which the chip colour already carries.
+  const sub = subtypeLabel(s.subtype)
+  if (s.type === 'drum') return { label: sub || 'Drums', cls: 'bg-amber-400/12 text-amber-200/90 border-amber-300/20', title: 'Drum' }
+  if (s.type === 'melodic') return { label: sub || 'Melodic', cls: 'bg-violet-400/12 text-violet-200/90 border-violet-300/20', title: 'Melodic' }
+  return { label: 'Unknown', cls: 'bg-white/5 text-white/45 border-white/10', title: 'Type not detected yet' }
 }
 
 export const SoundRow = memo(function SoundRow({
@@ -46,6 +49,7 @@ export const SoundRow = memo(function SoundRow({
         onDragStart(e, sound)
       }}
       onClick={(e) => onSelect(e, sound.id)}
+      data-sound-row
       className={`group flex h-[58px] items-center gap-3 rounded-lg px-2.5 transition-colors ${
         sound.missing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
       }`}
@@ -75,7 +79,7 @@ export const SoundRow = memo(function SoundRow({
         source={sound.keySource}
         confidence={sound.keyConfidence}
         pending={sound.needsAudioAnalysis}
-        dim={sound.keySource === 'analysis' && sound.keyConfidence < 0.65}
+        tentative={sound.keySource === 'analysis' && sound.keyConfidence < 0.5}
       />
 
       <div className="min-w-0 flex-1">
@@ -91,13 +95,25 @@ export const SoundRow = memo(function SoundRow({
         <WaveBars seed={sound.filename} color={col.solid} peaks={sound.waveformPeaks} className="h-7 w-full" />
       </div>
 
-      <span className={`hidden sm:inline-flex shrink-0 items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${chip.cls}`}>
+      <span
+        className={`hidden sm:inline-flex w-[74px] shrink-0 items-center justify-center truncate rounded-md border px-2 py-0.5 text-[11px] font-medium ${chip.cls}`}
+        title={chip.title}
+      >
         {chip.label}
       </span>
 
       <div className="w-12 shrink-0 text-right">
         {sound.bpm != null ? (
-          <span className="font-mono text-xs text-white/70 tabular-nums" title={sound.bpmSource ? `${sound.bpmSource} BPM` : ''}>
+          <span
+            className={`font-mono text-xs tabular-nums ${sound.bpmSource === 'analysis' && sound.bpmConfidence < 0.6 ? 'text-white/40' : 'text-white/70'}`}
+            title={
+              sound.bpmSource === 'analysis'
+                ? `Detected from audio · ${Math.round(sound.bpmConfidence * 100)}%`
+                : sound.bpmSource
+                  ? `From ${sound.bpmSource}`
+                  : ''
+            }
+          >
             {formatBpm(sound.bpm)}
           </span>
         ) : (

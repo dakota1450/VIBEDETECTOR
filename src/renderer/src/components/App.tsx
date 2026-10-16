@@ -13,6 +13,7 @@ export default function App(): JSX.Element {
   const refresh = useStore((s) => s.refresh)
   const setScan = useStore((s) => s.setScan)
   const analyzing = useStore((s) => s.scan.analyzing)
+  const phase = useStore((s) => s.scan.phase)
   const runAnalysis = useAnalysis()
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>()
 
@@ -34,6 +35,13 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (analyzing > 0) runAnalysis()
   }, [analyzing, runAnalysis])
+
+  // Re-read the library on every scan phase change too: a "sounds changed" event sent
+  // before this window finished mounting (e.g. the very first import) can't leave the
+  // list stale.
+  useEffect(() => {
+    if (phase !== 'idle') void refresh()
+  }, [phase, refresh])
 
   return (
     <div className="flex h-full flex-col">

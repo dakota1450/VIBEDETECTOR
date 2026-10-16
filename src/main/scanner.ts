@@ -6,7 +6,7 @@ import { detectBpmFromName } from '@shared/bpmDetect'
 import { classify } from '@shared/classify'
 import { normalizeTonic } from '@shared/keyColors'
 import { readMetadata } from './metadata'
-import type { DetectedRecord, Store } from './store'
+import { NAME_VERSION, type DetectedRecord, type Store } from './store'
 
 export const AUDIO_EXT = new Set(['.wav', '.aif', '.aiff', '.flac', '.mp3', '.ogg', '.m4a'])
 
@@ -82,7 +82,7 @@ export async function buildRecord(
   }
 
   // Tempo: filename first, then embedded metadata tag.
-  let bpm = detectBpmFromName(filename)
+  let bpm = detectBpmFromName(filename, meta.durationSec)
   if (bpm.bpm == null && meta.bpmTag != null && meta.bpmTag >= 40 && meta.bpmTag <= 300) {
     bpm = { bpm: Math.round(meta.bpmTag), confidence: 0.9, source: 'metadata' }
   }
@@ -180,7 +180,8 @@ export async function scanSources(
       // Incremental: skip files that are already indexed and unchanged (no metadata
       // read, no re-detection) so reopening the app doesn't re-scan everything.
       const existing = store.getByPath(file)
-      if (existing && !existing.missing) {
+      // Names parsed by an older parser version are re-read once (cheap — no audio).
+      if (existing && !existing.missing && (existing.nameVersion ?? 0) >= NAME_VERSION) {
         try {
           const st = await fs.stat(file)
           if (st.mtimeMs === existing.mtimeMs && st.size === existing.size) {

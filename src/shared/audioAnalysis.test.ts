@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { analyzeKey, analyzeBpm, analyzeDrum, computeChroma, detectKeyFromChroma } from './audioAnalysis'
+import { analyzeDrum } from './audioAnalysis'
+import { detectKey as analyzeKey } from './key'
+import { estimateTempo } from './tempo'
 
 function tone(freqs: number[], sr: number, durSec: number): Float32Array {
   const n = Math.floor(sr * durSec)
@@ -54,7 +56,7 @@ describe('audio key analysis', () => {
   })
 
   it('returns no key for silence', () => {
-    const est = detectKeyFromChroma(computeChroma(new Float32Array(22050), 22050))
+    const est = analyzeKey(new Float32Array(22050), 22050)
     expect(est.tonic).toBeNull()
   })
 
@@ -78,14 +80,14 @@ describe('audio bpm analysis', () => {
   it('estimates tempo from a 120 BPM pulse train', () => {
     const sr = 22050
     const buf = pulseTrain(120, sr, 5)
-    const est = analyzeBpm(buf, sr)
+    const est = estimateTempo(buf, sr)
     expect(est.bpm).not.toBeNull()
-    expect(Math.abs((est.bpm as number) - 120)).toBeLessThanOrEqual(12)
+    expect(Math.abs((est.bpm as number) - 120)).toBeLessThanOrEqual(1)
   })
 
   it('returns null for very short input', () => {
     const sr = 22050
-    expect(analyzeBpm(new Float32Array(Math.floor(sr * 0.5)), sr).bpm).toBeNull()
+    expect(estimateTempo(new Float32Array(Math.floor(sr * 0.5)), sr).bpm).toBeNull()
   })
 })
 

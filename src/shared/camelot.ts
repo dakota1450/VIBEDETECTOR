@@ -41,3 +41,19 @@ export function keyToCamelot(tonic: string | null, mode: KeyMode | null): string
   if (!tonic || !mode) return null
   return KEY_TO_CAMELOT[`${tonic}|${mode}`] ?? null
 }
+
+/**
+ * Harmonically compatible keys in the Camelot sense: the key itself, its relative
+ * major/minor (same number, other letter) and its neighbours one step around the
+ * wheel (±1, same letter) — the classic harmonic-mixing rule.
+ */
+export function compatibleKeys(tonic: string, mode: KeyMode): KeyId[] {
+  const code = keyToCamelot(tonic, mode)
+  if (!code) return [{ tonic, mode }]
+  const num = parseInt(code, 10)
+  const letter = code.slice(-1)
+  const other = letter === 'A' ? 'B' : 'A'
+  const wrap = (n: number): number => ((n - 1 + 12) % 12) + 1
+  const codes = [code, `${num}${other}`, `${wrap(num - 1)}${letter}`, `${wrap(num + 1)}${letter}`]
+  return codes.map((c) => CAMELOT_TO_KEY[c]).filter((k): k is KeyId => !!k)
+}

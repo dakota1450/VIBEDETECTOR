@@ -1,22 +1,20 @@
 import { useStore } from '../store/useStore'
+import { BrandMark } from './BrandMark'
 import { Plus, Radar } from './icons'
 
 export function EmptyState(): JSX.Element {
   const addSources = useStore((s) => s.addSources)
   return (
     <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-      <div className="relative mb-8 grid h-40 w-40 place-items-center">
-        <span className="absolute h-40 w-40 rounded-full border border-vibe/20 animate-breathe" />
-        <span className="absolute h-28 w-28 rounded-full border border-vibe/30" />
-        <span className="absolute h-40 w-40 rounded-full border-t-2 border-vibe/60 animate-sweep" />
-        <Radar width={56} height={56} className="text-vibe" />
+      <div className="relative mb-8 grid h-44 w-44 place-items-center">
+        <span className="absolute inset-0 rounded-full bg-[radial-gradient(closest-side,rgba(139,92,255,0.16),transparent)] animate-breathe" />
+        <BrandMark size={152} animated plate={false} />
       </div>
-      <h2 className="mb-2 text-2xl font-bold tracking-tight">
-        Detect the vibe of <span className="bg-gradient-to-r from-vibe to-fuchsia-400 bg-clip-text text-transparent">every sound</span>
-      </h2>
+      <h2 className="mb-2 text-2xl font-bold tracking-tight">Detect the vibe of every sound</h2>
       <p className="mb-6 max-w-md text-sm leading-relaxed text-white/45">
-        Add your sample folders and Vibe Detector will scan them, read the key and tempo of every sound, and sort drums from
-        melodic samples — so you can find the right one in seconds and drag it straight into your DAW.
+        Add your sample folders and Vibe Detector reads the key and tempo of every sound from the audio itself — locking
+        loops to their exact bar grid and learning keys from thousands of producer-labelled samples — so you can find the
+        right one in seconds and drag it straight into your DAW. Everything stays on your machine.
       </p>
       <button
         onClick={() => void addSources()}

@@ -22,9 +22,11 @@ export function formatKeyLong(tonic: string | null | undefined, mode: KeyMode | 
   return sym
 }
 
+/** Tempo label: whole BPMs as integers, fractional ones (e.g. 87.5) to one decimal. */
 export function formatBpm(bpm: number | null | undefined): string {
-  if (bpm == null) return '—'
-  return String(Math.round(bpm))
+  if (bpm == null || !isFinite(bpm)) return '—'
+  const r = Math.round(bpm)
+  return Math.abs(bpm - r) < 0.05 ? String(r) : bpm.toFixed(1)
 }
 
 export function formatDuration(sec: number | null | undefined): string {

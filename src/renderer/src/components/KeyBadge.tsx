@@ -34,6 +34,7 @@ export function KeyBadge({
   mode,
   size = 'md',
   dim = false,
+  tentative = false,
   source,
   confidence,
   pending = false
@@ -42,6 +43,8 @@ export function KeyBadge({
   mode: KeyMode | null
   size?: 'sm' | 'md' | 'lg'
   dim?: boolean
+  /** A low-confidence estimate: drawn with a dashed outline. */
+  tentative?: boolean
   source?: DetectionSource | null
   confidence?: number
   pending?: boolean
@@ -50,15 +53,17 @@ export function KeyBadge({
   const camelot = keyToCamelot(tonic, mode)
   const pad = size === 'lg' ? 'px-2.5 py-1 text-sm' : size === 'sm' ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-0.5 text-xs'
   const trust = keyTrustLabel(source, confidence, pending)
-  const title = tonic ? `${formatKeyLong(tonic, mode)}${camelot ? ` · ${camelot}` : ''} · ${trust}` : `Unknown key · ${trust}`
+  const title = tonic
+    ? `${formatKeyLong(tonic, mode)}${camelot ? ` · ${camelot}` : ''} · ${trust}${tentative ? ' · tentative' : ''}`
+    : `Unknown key · ${trust}`
   return (
     <span
       className={`relative inline-flex items-center justify-center rounded-md font-semibold tabular-nums ${pad}`}
       style={{
         background: c.soft,
         color: c.text,
-        border: `1px solid ${c.ring}`,
-        opacity: dim ? 0.55 : 1,
+        border: `1px ${tentative ? 'dashed' : 'solid'} ${c.ring}`,
+        opacity: dim ? 0.55 : tentative ? 0.8 : 1,
         minWidth: size === 'sm' ? 30 : 38
       }}
       title={title}

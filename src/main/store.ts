@@ -52,16 +52,35 @@ interface Persisted {
 // and only that detection step re-runs across the library — on only the sounds it can
 // still help — instead of re-decoding everything. This is what makes shipping a
 // detection improvement seamless: the next launch quietly backfills just the delta.
-const KEY_VERSION = 1
-const BPM_VERSION = 1
+// v2 (0.5.0): learned key classifier + loop-grid tempo estimator.
+const KEY_VERSION = 2
+const BPM_VERSION = 2
 const CLASSIFY_VERSION = 1
 const CURRENT_WAVEFORM_VERSION = 1
+// Filename parsers (key / tempo / type from the name). Bumping it makes the next scan
+// re-read the names of unchanged files once (no audio work), so parser fixes reach
+// existing libraries. v2 (0.5.0): pack-code prefixes (AB_, DBM_) are no longer read
+// as flat keys; bare tempo numbers are checked against the loop length.
+export const NAME_VERSION = 2
+
+/** Current per-capability analyzer versions (exported for tests / diagnostics). */
+export const ANALYZER_VERSIONS = {
+  key: KEY_VERSION,
+  bpm: BPM_VERSION,
+  classify: CLASSIFY_VERSION,
+  waveform: CURRENT_WAVEFORM_VERSION
+} as const
 // Advances whenever any analyzer does, so a file that previously failed to decode is
 // retried once after an update (but not on every launch).
 const PIPELINE_VERSION = KEY_VERSION + BPM_VERSION + CLASSIFY_VERSION + CURRENT_WAVEFORM_VERSION
 // Coarse "last fully analyzed at" stamp kept on each sound for display/diagnostics
 // only — gating now lives in the per-capability versions above.
 const CURRENT_ANALYSIS_VERSION = PIPELINE_VERSION
+// Shorter than this can't hold a bar of music, so it never gets a tempo.
+const MIN_TEMPO_SECONDS = 1.2
+// Filename tempos below this confidence (several numbers, none confirmed by the loop
+// length) get an audio check.
+const TRUSTED_NAME_BPM_CONFIDENCE = 0.7
 const MAX_TAG_LENGTH = 48
 const MAX_TAGS_PER_SOUND = 64
 const MAX_NOTES_LENGTH = 5000
@@ -69,6 +88,7 @@ const MAX_NOTES_LENGTH = 5000
 const SOUND_TYPES = new Set<SoundType>(['drum', 'melodic', 'unknown'])
 const KEY_MODES = new Set<KeyMode>(['major', 'minor'])
 const DRUM_SUBTYPES = new Set<DrumSubtype>([
+  'loop',
   'kick',
   'snare',
   'clap',
@@ -149,12 +169,26 @@ export function needsAudioKey(s: Sound): boolean {
   return (s.keyVersion ?? 0) < KEY_VERSION
 }
 
+// Producers file one-shots under names like "One Shots" / "Hits"; loops say so too.
+const ONE_SHOT_WORDS = /(?<![a-z])(?:one\s?shots?|oneshots?|1\s?shots?|single\s?(?:hits?|notes?)|hits?|stabs?)(?![a-z])/
+const LOOP_WORDS = /(?<![a-z])(?:loops?|grooves?|breaks?|fills?|phrases?|patterns?|beats?|progressions?|riffs?|tops?)(?![a-z])/
+
+/** Named like a one-shot (and nothing says loop) — no tempo to find. */
+export function looksLikeOneShot(s: Pick<Sound, 'filename' | 'folder'>): boolean {
+  const hay = ` ${s.folder ?? ''} ${s.filename} `.toLowerCase().replace(/[_\-.()[\]]+/g, ' ')
+  return ONE_SHOT_WORDS.test(hay) && !LOOP_WORDS.test(hay)
+}
+
 export function needsAudioBpm(s: Sound): boolean {
   if (s.bpmSource === 'manual') return false
-  if (s.type === 'drum') return false // one-shots/hits: a single tempo isn't meaningful
-  // Trust a producer's filename/metadata tempo; only fill a gap or re-derive a prior
-  // analysis tempo, and (like key) only once per BPM_VERSION so it never re-queues.
-  if (s.bpm != null && s.bpmSource !== 'analysis') return false
+  if (looksLikeOneShot(s)) return false
+  // One-shots/hits are too short for a tempo. Anything that can hold a bar — drum
+  // loops included — is analysed; the detector itself rejects sounds with no pulse.
+  if (s.durationSec != null && s.durationSec < MIN_TEMPO_SECONDS) return false
+  // Trust a producer's confident filename/metadata tempo; only fill a gap, check a
+  // weak filename guess, or re-derive a prior analysis tempo — and (like key) only
+  // once per BPM_VERSION so it never re-queues.
+  if (s.bpm != null && s.bpmSource !== 'analysis' && s.bpmConfidence >= TRUSTED_NAME_BPM_CONFIDENCE) return false
   return (s.bpmVersion ?? 0) < BPM_VERSION
 }
 
@@ -247,6 +281,39 @@ function applyClassification(
   }
 }
 
+const isOctaveOf = (a: number, b: number): boolean =>
+  [0.5, 2, 1 / 3, 3].some((m) => Math.abs(a - b * m) <= 0.03 * b * m)
+
+/** Merge an audio tempo result into a sound (never touches manual tempos). */
+function applyTempo(s: Sound, r: NonNullable<AnalysisResult['bpm']>): void {
+  const alternatives = Array.isArray(r.alternatives) ? r.alternatives.filter((v) => typeof v === 'number' && isFinite(v)).slice(0, 4) : null
+  const fromProducer = s.bpm != null && (s.bpmSource === 'filename' || s.bpmSource === 'metadata')
+  if (r.value == null) {
+    // The upgraded analyzer found no pulse: drop an earlier analysis guess.
+    if (s.bpmSource === 'analysis') {
+      s.bpm = null
+      s.bpmConfidence = 0
+      s.bpmSource = null
+      s.bpmAlternatives = null
+    }
+    return
+  }
+  if (fromProducer && s.bpm != null) {
+    // A weak filename tempo the audio agrees with (or reads at half/double time — the
+    // producer's octave convention wins) becomes trusted; a clearly different, confident
+    // audio tempo replaces it.
+    if (Math.abs(r.value - s.bpm) <= Math.max(0.6, 0.012 * s.bpm) || isOctaveOf(r.value, s.bpm)) {
+      s.bpmConfidence = Math.max(s.bpmConfidence, 0.9)
+      return
+    }
+    if (r.confidence < 0.7) return
+  }
+  s.bpm = r.value
+  s.bpmConfidence = r.confidence
+  s.bpmSource = 'analysis'
+  s.bpmAlternatives = alternatives
+}
+
 /**
  * Local library index. Pure-JS JSON-backed store (atomic, debounced writes) behind
  * a small repository surface so a SQLite backend could replace it without touching
@@ -322,6 +389,14 @@ export class Store {
       }
       if (s.waveformVersion === undefined) {
         s.waveformVersion = null
+        migrated = true
+      }
+      if (s.keyCandidates === undefined) {
+        s.keyCandidates = null
+        migrated = true
+      }
+      if (s.bpmAlternatives === undefined) {
+        s.bpmAlternatives = null
         migrated = true
       }
       if (s.waveformPeaks !== null && s.waveformPeaks !== undefined) {
@@ -459,9 +534,11 @@ export class Store {
         keyConfidence: rec.keyConfidence,
         keySource: rec.keySource,
         keyDiagnostics: null,
+        keyCandidates: null,
         bpm: rec.bpm,
         bpmConfidence: rec.bpmConfidence,
         bpmSource: rec.bpmSource,
+        bpmAlternatives: null,
         type: rec.type,
         subtype: rec.subtype,
         typeSource: rec.typeSource,
@@ -477,6 +554,7 @@ export class Store {
         errorVersion: null,
         waveformPeaks: null,
         waveformVersion: null,
+        nameVersion: NAME_VERSION,
         needsAudioAnalysis: false,
         missing: false
       }
@@ -489,6 +567,7 @@ export class Store {
     }
 
     const unchanged = existing.mtimeMs === rec.mtimeMs && existing.size === rec.size
+    existing.nameVersion = NAME_VERSION
     existing.sourceId = rec.sourceId
     existing.filename = rec.filename
     existing.folder = rec.folder
@@ -520,6 +599,7 @@ export class Store {
         existing.keyConfidence = rec.keyConfidence
         existing.keySource = rec.keySource
         existing.keyDiagnostics = null
+        existing.keyCandidates = null
       }
     }
     if (existing.bpmSource !== 'manual') {
@@ -528,6 +608,7 @@ export class Store {
         existing.bpm = rec.bpm
         existing.bpmConfidence = rec.bpmConfidence
         existing.bpmSource = rec.bpmSource
+        existing.bpmAlternatives = null
       }
     }
     if (existing.typeSource !== 'manual') {
@@ -574,9 +655,10 @@ export class Store {
       s.keyDiagnostics = null
     }
     if ('bpm' in patch) {
+      s.bpmAlternatives = null
       const bpm = patch.bpm
       if (typeof bpm === 'number' && isFinite(bpm)) {
-        s.bpm = Math.max(40, Math.min(300, Math.round(bpm)))
+        s.bpm = Math.max(40, Math.min(300, Math.round(bpm * 100) / 100))
         s.bpmConfidence = 1
       } else {
         s.bpm = null
@@ -621,15 +703,16 @@ export class Store {
       if (r.key && s.keySource !== 'manual') {
         const previous = keySnapshot(s)
         const candidate = resultKeySnapshot(r.key)
+        s.keyCandidates = Array.isArray(r.key.candidates) ? r.key.candidates.slice(0, 4) : null
         let keyDecision: KeyDecisionDiagnostics['decision'] | null = null
         if (r.key.tonic) {
           const sameTonic = s.keyTonic === r.key.tonic
           const compatibleMode = r.key.mode == null || s.keyMode == null || s.keyMode === r.key.mode
-          const weakFilenameKey = s.keySource === 'filename' && s.keyConfidence < 0.75
-          const audioCanCorrectDrumKey = s.type === 'drum' && !sameTonic && r.key.confidence >= 0.52
-          const audioCanRefreshAnalysis = s.keySource === 'analysis' && r.key.confidence >= s.keyConfidence + 0.03
-          const analysisIsStronger = r.key.confidence >= Math.max(0.55, s.keyConfidence + 0.1)
-          if (!s.keyTonic || audioCanCorrectDrumKey || audioCanRefreshAnalysis || (weakFilenameKey && analysisIsStronger)) {
+          // Producer-provided keys (filename/metadata) reaching here are the weak ones;
+          // audio replaces them only when it is clearly more certain.
+          const fromProducer = s.keySource === 'filename' || s.keySource === 'metadata'
+          const analysisIsStronger = r.key.confidence >= Math.max(0.6, s.keyConfidence + 0.1)
+          if (!s.keyTonic || !fromProducer || (!sameTonic && analysisIsStronger)) {
             s.keyTonic = r.key.tonic
             s.keyMode = r.key.mode
             s.keyConfidence = r.key.confidence
@@ -638,32 +721,27 @@ export class Store {
               outcome: previous.tonic ? 'updated' : 'accepted',
               reason: !previous.tonic
                 ? 'filled missing key from audio analysis'
-                : audioCanCorrectDrumKey
-                  ? 'audio corrected drum key'
-                  : audioCanRefreshAnalysis
-                    ? 'new audio analysis improved prior analysis confidence'
-                    : 'audio analysis was stronger than weak filename key',
+                : !fromProducer
+                  ? 'refreshed by the upgraded audio analyzer'
+                  : 'audio analysis was stronger than a weak filename key',
               candidate,
               previous
             }
-          } else if (sameTonic && compatibleMode && (r.key.confidence > s.keyConfidence || (s.keyMode == null && r.key.mode != null))) {
+          } else if (sameTonic && compatibleMode) {
+            // Audio confirms the producer's tonic: keep their label, add the mode if
+            // they left it out, and trust it more.
             if (s.keyMode == null && r.key.mode != null) s.keyMode = r.key.mode
-            s.keyConfidence = Math.max(s.keyConfidence, r.key.confidence)
-            if (s.type === 'drum') s.keySource = 'analysis'
+            s.keyConfidence = Math.max(s.keyConfidence, Math.min(0.95, r.key.confidence + 0.1))
             keyDecision = {
               outcome: 'updated',
-              reason: 'audio matched existing key and improved confidence or mode detail',
+              reason: 'audio analysis confirmed the filename key',
               candidate,
               previous
             }
           } else {
             keyDecision = {
               outcome: 'rejected',
-              reason: sameTonic
-                ? compatibleMode
-                  ? 'audio matched existing key but did not improve confidence'
-                  : 'audio mode conflicted with existing key mode'
-                : 'existing filename or metadata key was stronger than audio analysis',
+              reason: sameTonic ? 'audio mode conflicted with the filename key mode' : 'filename key was stronger than audio analysis',
               candidate,
               previous
             }
@@ -675,14 +753,14 @@ export class Store {
           s.keySource = null
           keyDecision = {
             outcome: 'cleared',
-            reason: 'upgraded analyzer rejected the previous analysis key',
+            reason: 'upgraded analyzer found no reliable key',
             candidate,
             previous
           }
         } else {
           keyDecision = {
             outcome: 'rejected',
-            reason: 'audio analysis did not find a reliable key and existing key was not analysis-sourced',
+            reason: previous.tonic ? 'audio analysis found no reliable key; kept the existing key' : 'no reliable key in the audio',
             candidate,
             previous
           }
@@ -694,11 +772,7 @@ export class Store {
       }
       if (r.bpm) {
         s.bpmVersion = BPM_VERSION
-        if (r.bpm.value != null && s.bpm == null && s.bpmSource !== 'manual') {
-          s.bpm = r.bpm.value
-          s.bpmConfidence = r.bpm.confidence
-          s.bpmSource = 'analysis'
-        }
+        if (s.bpmSource !== 'manual') applyTempo(s, r.bpm)
       }
       if (r.cls && s.typeSource !== 'manual') {
         applyClassification(s, r.cls)

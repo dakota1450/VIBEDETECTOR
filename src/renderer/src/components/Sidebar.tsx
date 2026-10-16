@@ -84,15 +84,29 @@ export function Sidebar(): JSX.Element {
     <aside className="w-[300px] shrink-0 h-full overflow-y-auto border-r border-white/5 bg-black/20">
       <Section title="Key — circle of fifths">
         <KeyWheel />
-        <label className="mt-3 flex items-center gap-1.5 text-xs text-white/55 cursor-pointer no-drag">
-          <input
-            type="checkbox"
-            checked={filter.matchKeyAnyMode}
-            onChange={(e) => patchFilter({ matchKeyAnyMode: e.target.checked })}
-            className="accent-[#8b5cff]"
-          />
-          Root only
-        </label>
+        <div className="mt-3 flex items-center gap-4">
+          <label className="flex items-center gap-1.5 text-xs text-white/55 cursor-pointer no-drag" title="Match the root note in either mode">
+            <input
+              type="checkbox"
+              checked={filter.matchKeyAnyMode}
+              onChange={(e) => patchFilter({ matchKeyAnyMode: e.target.checked })}
+              className="accent-[#8b5cff]"
+            />
+            Root only
+          </label>
+          <label
+            className="flex items-center gap-1.5 text-xs text-white/55 cursor-pointer no-drag"
+            title="Also show harmonically compatible keys: the relative major/minor and the neighbours one step around the Camelot wheel"
+          >
+            <input
+              type="checkbox"
+              checked={!!filter.harmonicMatch}
+              onChange={(e) => patchFilter({ harmonicMatch: e.target.checked })}
+              className="accent-[#8b5cff]"
+            />
+            Compatible keys
+          </label>
+        </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {(['unknown', 'low', 'verified'] as LibraryFilter['keyStatus'][]).map((status) => (
             <Pill

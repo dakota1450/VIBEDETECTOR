@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { analyzeKey, analyzeDrum } from './audioAnalysis'
+import { analyzeDrum } from './audioAnalysis'
+import { detectKey as analyzeKey } from './key'
 
 const SR = 22050
 
@@ -220,9 +221,48 @@ describe('key detection on polyphonic content', () => {
     expect(est.tonic).toBe('G')
     expect(est.mode).toBe('major')
   })
-  it('reads an E minor melodic phrase as E minor, not its relative major', () => {
+  it('keeps E minor among the top readings of a short E minor phrase (not its relative major)', () => {
+    // An 8-note, 2-second line is genuinely ambiguous between i and iv; the full reading
+    // is exercised by the progression tests below.
     const est = analyzeKey(phrase(['E', 'G', 'A', 'B', 'D', 'C', 'B', 'E'], 3, 'E', 2), SR)
+    const top2 = (est.candidates ?? []).slice(0, 2).map((c) => `${c.tonic}${c.mode}`)
+    expect(top2).toContain('Eminor')
+    expect(top2).not.toContain('Gmajor')
+  })
+  it('reads a longer E minor phrase as E minor', () => {
+    const line = ['E', 'G', 'A', 'B', 'D', 'C', 'B', 'E']
+    const est = analyzeKey(phrase([...line, ...line], 3, 'E', 2), SR)
     expect(est.tonic).toBe('E')
+    expect(est.mode).toBe('minor')
+  })
+})
+
+/** A 4-bar chord-progression loop: one chord per bar, root doubled in the bass. */
+function progression(chords: [string, 'maj' | 'min'][], bpm = 90): Float32Array {
+  const bar = (4 * 60) / bpm
+  const parts = chords.map(([root, q]) => {
+    const r = freq(root, 3)
+    const third = r * Math.pow(2, (q === 'maj' ? 4 : 3) / 12)
+    const fifth = r * Math.pow(2, 7 / 12)
+    return chord([r, third, fifth], bar)
+  })
+  return concat(...parts)
+}
+
+describe('key detection on chord-progression loops', () => {
+  it('reads Em–C–G–D as E minor', () => {
+    const est = analyzeKey(progression([['E', 'min'], ['C', 'maj'], ['G', 'maj'], ['D', 'maj']]), SR)
+    expect(est.tonic).toBe('E')
+    expect(est.mode).toBe('minor')
+  })
+  it('reads G–D–Em–C as G major', () => {
+    const est = analyzeKey(progression([['G', 'maj'], ['D', 'maj'], ['E', 'min'], ['C', 'maj']]), SR)
+    expect(est.tonic).toBe('G')
+    expect(est.mode).toBe('major')
+  })
+  it('reads Am–F–C–G as A minor', () => {
+    const est = analyzeKey(progression([['A', 'min'], ['F', 'maj'], ['C', 'maj'], ['G', 'maj']]), SR)
+    expect(est.tonic).toBe('A')
     expect(est.mode).toBe('minor')
   })
 })

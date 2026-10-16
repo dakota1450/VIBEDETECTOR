@@ -31,7 +31,7 @@
     <div class="container">
       <a class="brand" href="#top" aria-label="Vibe Detector home">
         <img src="assets/icon.png" alt="" />
-        <span class="wordmark"><span class="vibe-w">VIBE</span> <span class="grad-text">DETECTOR</span></span>
+        <span class="wordmark">VIBE <span class="dim">DETECTOR</span></span>
       </a>
       <div class="nav-links">
         <a class="nav-hide" href="#workflow">Workflow</a>
@@ -84,7 +84,7 @@
       <div class="shot" id="shot" data-tilt>
         <div class="shot-bar">
           <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
-          <span class="addr">Vibe Detector — 17 sounds</span>
+          <span class="addr">Vibe Detector — 27 sounds</span>
         </div>
         <img src="assets/screenshot.png" alt="The Vibe Detector app: a circle-of-fifths key filter, a virtualized sound list with key badges, waveforms and type chips, and a preview player." />
         <span class="shot-glow"></span>
@@ -93,9 +93,9 @@
       <div class="mini-player" aria-hidden="true">
         <button class="mp-play" type="button" aria-label="Preview"><i data-icon="play-fill"></i></button>
         <span class="key-badge sm" style="--kc:hsl(90 58% 50%)">Am</span>
-        <span class="mp-name mono">8A_melody_loop.wav</span>
+        <span class="mp-name mono">Velvet Keys.wav</span>
         <div class="wave is-live" data-wave data-count="44" data-progress="0.46" style="--kc:hsl(90 58% 50%)"></div>
-        <span class="mp-time mono">2.0s</span>
+        <span class="mp-time mono">10.7s</span>
       </div>
     </div>
   </section>
@@ -175,7 +175,56 @@
     <div class="container">
       <div class="reveal">
         <div class="eyebrow">Detection</div>
-        <h2 class="section-title">Four signals, detected on every sound.</h2>
+        <h2 class="section-title">Measured on real sample packs — not guessed.</h2>
+        <p class="section-sub">
+          We ran the audio analysis over <b>10,817 producer-labelled samples</b> from 2,000+ packs and
+          scored it only on packs its models never saw while training. Filenames ignored — this is
+          what it hears.
+        </p>
+      </div>
+
+      <div class="stat-grid" data-stagger>
+        <div class="card stat" style="--kc:hsl(0 82% 60%)">
+          <div class="stat-num"><span data-count-to="80">0</span><small>%</small></div>
+          <div class="stat-label">of loops get their <b>exact</b> BPM, read from the audio</div>
+          <div class="stat-foot">93% counting half/double time · v0.4: 7%</div>
+        </div>
+        <div class="card stat" style="--kc:hsl(60 82% 60%)">
+          <div class="stat-num"><span data-count-to="94">0</span><small>%</small></div>
+          <div class="stat-label">right when it's sure (85%+) of a loop's tempo</div>
+          <div class="stat-foot">6 in 10 loops get a reading that confident</div>
+        </div>
+        <div class="card stat" style="--kc:hsl(120 82% 60%)">
+          <div class="stat-num"><span data-count-to="81">0</span><small>%</small></div>
+          <div class="stat-label">of loops have the right key in their top-3 reading</div>
+          <div class="stat-foot">Root right 58% when named · v0.4: 45%</div>
+        </div>
+        <div class="card stat" style="--kc:hsl(210 82% 60%)">
+          <div class="stat-num"><span data-count-to="84">0</span><small>%</small></div>
+          <div class="stat-label">of bass &amp; 808 one-shots land on their exact note</div>
+          <div class="stat-foot">88% of the ones it keys · hats &amp; claps stay keyless</div>
+        </div>
+      </div>
+
+      <div class="how-grid" data-stagger>
+        <div class="how-step">
+          <span class="how-num">01 · HEAR</span>
+          <div class="card-title">Every onset, every note</div>
+          <p class="card-body">Mel-band spectral flux at 172 frames a second catches kicks, note attacks and chord
+            changes; a tuning-corrected pitch analysis reads the notes underneath — drums filtered out.</p>
+        </div>
+        <div class="how-step">
+          <span class="how-num">02 · LOCK</span>
+          <div class="card-title">Snapped to the bar grid</div>
+          <p class="card-body">Loops are cut to whole bars, so a file's exact length admits only a handful of
+            tempos. Scoring each against the audio's pulse pins the BPM — exactly.</p>
+        </div>
+        <div class="how-step">
+          <span class="how-num">03 · LEARN</span>
+          <div class="card-title">Trained on producer labels</div>
+          <p class="card-body">Key profiles, bass and chord evidence and the loop's opening chord feed models
+            trained on thousands of labelled samples — each call carries an honest confidence.</p>
+        </div>
       </div>
 
       <div class="detect-grid" data-stagger>
@@ -185,7 +234,8 @@
             <span class="card-icon"><i data-icon="circle-dot"></i></span>
             <span class="name">Key</span>
           </div>
-          <p class="card-body">Major and minor, mapped to the circle-of-fifths color system — filename, metadata, then on-device audio analysis.</p>
+          <p class="card-body">Major and minor on the circle-of-fifths colour system. Producer tags are trusted
+            first; the audio model fills the gaps and fixes weak tags — with its runner-up keys one click away.</p>
           <div class="detect-row">
             <span class="key-badge" style="--kc:hsl(0 82% 60%)">C</span>
             <span class="key-badge" style="--kc:hsl(180 82% 60%)">F#</span>
@@ -200,7 +250,8 @@
             <span class="card-icon"><i data-icon="gauge"></i></span>
             <span class="name">Tempo</span>
           </div>
-          <p class="card-body">BPM with ½× / 2× awareness, plus preset and custom ranges so loops line up.</p>
+          <p class="card-body">Exact BPM locked to the loop's bar grid — drum loops included — with ½× / 2× readings
+            one click away. One-shots don't get a fake tempo.</p>
           <div class="bpm-readout"><span id="bpmValue" data-bpm-count="128">0</span> <small>BPM</small></div>
         </div>
 
@@ -296,7 +347,7 @@
     <div class="container">
       <a class="brand" href="#top">
         <img src="assets/icon.png" alt="" />
-        <span class="wordmark">VIBE DETECTOR</span>
+        <span class="wordmark">VIBE <span class="dim">DETECTOR</span></span>
       </a>
       <span class="foot-note">Detect the vibe of every sound. © 2026</span>
     </div>

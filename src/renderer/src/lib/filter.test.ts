@@ -80,3 +80,35 @@ describe('key trust filters', () => {
     expect(result.map((s) => s.id)).toEqual([7])
   })
 })
+
+describe('key filter', () => {
+  const sounds = [
+    sound(1, { keyTonic: 'C', keyMode: 'major', keyConfidence: 0.9, keySource: 'filename' }),
+    sound(2, { keyTonic: 'C', keyMode: 'minor', keyConfidence: 0.9, keySource: 'filename' }),
+    sound(3, { keyTonic: 'C', keyMode: null, keyConfidence: 0.8, keySource: 'analysis' }),
+    sound(4, { keyTonic: 'D', keyMode: 'minor', keyConfidence: 0.9, keySource: 'filename' })
+  ]
+
+  it('lets a tonic-only sound (a single note or 808) match both modes on its root', () => {
+    expect(applyFilter(sounds, { ...defaultFilter, keys: [{ tonic: 'C', mode: 'minor' }] }).map((s) => s.id)).toEqual([2, 3])
+    expect(applyFilter(sounds, { ...defaultFilter, keys: [{ tonic: 'C', mode: 'major' }] }).map((s) => s.id)).toEqual([1, 3])
+  })
+
+  it('matches any mode on the root when asked', () => {
+    expect(applyFilter(sounds, { ...defaultFilter, keys: [{ tonic: 'C', mode: 'major' }], matchKeyAnyMode: true }).map((s) => s.id)).toEqual([1, 2, 3])
+  })
+})
+
+describe('harmonic (Camelot) key matching', () => {
+  const sounds = [
+    sound(1, { keyTonic: 'A', keyMode: 'minor', keyConfidence: 0.9, keySource: 'filename' }),
+    sound(2, { keyTonic: 'C', keyMode: 'major', keyConfidence: 0.9, keySource: 'filename' }),
+    sound(3, { keyTonic: 'E', keyMode: 'minor', keyConfidence: 0.9, keySource: 'filename' }),
+    sound(4, { keyTonic: 'F#', keyMode: 'major', keyConfidence: 0.9, keySource: 'filename' })
+  ]
+  it('widens a key selection to its relative and neighbouring keys', () => {
+    const f = { ...defaultFilter, keys: [{ tonic: 'A', mode: 'minor' as const }] }
+    expect(applyFilter(sounds, f).map((s) => s.id)).toEqual([1])
+    expect(applyFilter(sounds, { ...f, harmonicMatch: true }).map((s) => s.id)).toEqual([1, 2, 3])
+  })
+})

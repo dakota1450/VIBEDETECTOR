@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import { useStore } from '../store/useStore'
 import { keyColor } from '@shared/keyColors'
-import { formatDuration } from '@shared/format'
+import { formatBpm, formatDuration } from '@shared/format'
 import { KeyBadge } from './KeyBadge'
 import { Loop, Mute, Pause, Play, Volume } from './icons'
 
@@ -197,6 +197,9 @@ export function PlayerBar(): JSX.Element {
               <span className="truncate text-sm text-white/85" title={current.filename}>
                 {current.filename}
               </span>
+              {current.bpm != null && (
+                <span className="shrink-0 font-mono text-[11px] tabular-nums text-white/45">{formatBpm(current.bpm)} BPM</span>
+              )}
             </div>
             <span className={`truncate text-[11px] ${loadError ? 'text-rose-200/70' : 'text-white/35'}`}>
               {loadError ?? current.folder ?? '—'}

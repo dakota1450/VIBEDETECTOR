@@ -253,10 +253,10 @@
      BPM count-up (when in view)
      ====================================================================== */
   function initCounters() {
-    const els = $$('[data-bpm-count]');
+    const els = $$('[data-bpm-count], [data-count-to]');
     if (!els.length) return;
     const run = (el) => {
-      const target = Number(el.getAttribute('data-bpm-count')) || 0;
+      const target = Number(el.getAttribute('data-bpm-count') || el.getAttribute('data-count-to')) || 0;
       if (REDUCED) { el.textContent = target; return; }
       const dur = 1100, t0 = performance.now();
       const tick = (now) => {

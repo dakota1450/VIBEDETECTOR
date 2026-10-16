@@ -287,7 +287,8 @@ function registerIpc(): void {
         needsBpm: needsAudioBpm(s),
         classifyDrum: classifyDrum || (needsKey && s.type === 'drum'),
         needsPeaks,
-        isDrum: s.type === 'drum'
+        isDrum: s.type === 'drum',
+        subtype: s.subtype
       }
     })
   )
@@ -331,6 +332,8 @@ function createWindow(): void {
     icon: resourcePath('icon.png'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
+    // Lets the demo/screenshot hook render a 2× window on smaller displays.
+    enableLargerThanScreen: !!process.env.VIBE_SHOT_SCALE,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -340,6 +343,9 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // Chromium persists zoom per origin; the app has no zoom controls, so always start at
+  // 100% (guards against a stale level, e.g. from the 2× screenshot hook below).
+  mainWindow.webContents.on('did-finish-load', () => mainWindow?.webContents.setZoomFactor(1))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -454,7 +460,24 @@ app.whenReady().then(async () => {
         () => {
           void (async () => {
             try {
+              // Demo hooks: render at 2× for crisp shots on any display (same layout, more
+              // pixels), and select the nth row so the shot shows the detail panel.
+              const scale = Number(process.env.VIBE_SHOT_SCALE)
+              if (scale > 1 && mainWindow) {
+                const [w, h] = mainWindow.getContentSize()
+                mainWindow.setContentSize(Math.round(w * scale), Math.round(h * scale))
+                mainWindow.webContents.setZoomFactor(scale)
+                await new Promise((r) => setTimeout(r, 1200))
+              }
+              const click = Number(process.env.VIBE_SHOT_CLICK)
+              if (Number.isInteger(click) && click >= 0) {
+                await mainWindow!.webContents.executeJavaScript(
+                  `document.querySelectorAll('[data-sound-row]')[${click}]?.click()`
+                )
+                await new Promise((r) => setTimeout(r, 900))
+              }
               const img = await mainWindow!.webContents.capturePage()
+              if (scale > 1) mainWindow!.webContents.setZoomFactor(1) // don't persist the 2× zoom
               await fsp.writeFile(process.env.VIBE_SHOT as string, img.toPNG())
             } catch {
               // ignore

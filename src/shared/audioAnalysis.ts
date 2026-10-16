@@ -1,22 +1,13 @@
 import FFT from 'fft.js'
-import type { KeyDecisionDiagnostics, KeyEvidenceItem, KeyMode } from './types'
 import { PITCH_CLASSES } from './keyColors'
 
-// Krumhansl–Kessler key profiles (major / minor), indexed from the tonic.
-export const KS_MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
-export const KS_MINOR = [6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
-
-// Chroma analysis. A larger frame gives better low-frequency separation; peak
-// picking + parabolic interpolation recovers precise partial frequencies so the
-// chroma reflects actual tonal content rather than broadband noise.
-const FRAME = 8192
-const HOP = 4096
-const CHROMA_FMIN = 30
-const CHROMA_FMAX = 5000
-const ROOT_CHROMA_FMAX = 420
-const KEY_ANALYSIS_SECONDS = 20
-const KEY_SECTION_SECONDS = 4
-const KEY_MAX_SECTIONS = 5
+// Low-level audio analysis shared by the key, tempo and type detectors:
+//   • activeRegion — the audible span of a sample (skips silence padding);
+//   • estimatePitchClass — a robust multi-window YIN pitch tracker for one-shots and
+//     tuned drums (skips the attack transient, votes across the sustained body);
+//   • analyzeDrum — drum-vs-melodic type and drum subtype from the sound itself.
+// Key detection lives in key.ts (learned classifier over keyFeatures.ts), tempo in
+// tempo.ts; analysisJob.ts runs a whole analysis pass.
 
 // Monophonic pitch (YIN). The lower bound is intentionally low so sub-bass and
 // 808-range fundamentals (~40 Hz) are reachable; pitch class is octave-invariant
@@ -27,13 +18,6 @@ const PITCH_SPAN_SECONDS = 1.6
 const PITCH_MAX_WINDOWS = 8
 const YIN_THRESHOLD = 0.15
 const HANN_CACHE = new Map<number, Float32Array>()
-
-interface ChromaOptions {
-  fMin?: number
-  fMax?: number
-  bassBias?: boolean
-  harmonicFolding?: boolean
-}
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
@@ -48,246 +32,12 @@ function hannWindow(N: number): Float32Array {
   return w
 }
 
-/**
- * Build a 12-bin chromagram (C..B) from mono PCM. Picks spectral peaks per frame
- * and maps their interpolated frequencies to pitch classes, so tonal energy is
- * concentrated and broadband/percussive noise is largely rejected.
- */
-export function computeChroma(samples: ArrayLike<number>, sampleRate: number, options: ChromaOptions = {}): Float32Array {
-  const chroma = new Float32Array(12)
-  const len = samples.length
-  if (len < 1024) return chroma
-  const fMin = options.fMin ?? CHROMA_FMIN
-  const fMax = options.fMax ?? CHROMA_FMAX
-  const bassBias = options.bassBias ?? true
-  const harmonicFolding = options.harmonicFolding ?? true
-
-  const fft = new FFT(FRAME)
-  const spectrum = fft.createComplexArray()
-  const window = hannWindow(FRAME)
-  const half = FRAME / 2
-  const mag = new Float64Array(half)
-  const frame = new Array<number>(FRAME)
-  const fc = new Float64Array(12) // per-frame chroma
-
-  const addFrame = (start: number): void => {
-    for (let i = 0; i < FRAME; i++) {
-      const idx = start + i
-      frame[i] = (idx < len ? samples[idx] : 0) * window[i]
-    }
-    fft.realTransform(spectrum, frame)
-    fft.completeSpectrum(spectrum)
-    let mean = 0
-    for (let k = 1; k < half; k++) {
-      const re = spectrum[2 * k]
-      const im = spectrum[2 * k + 1]
-      const m = Math.sqrt(re * re + im * im)
-      mag[k] = m
-      mean += m
-    }
-    mean /= half - 1
-    const floor = mean * 1.5
-    fc.fill(0)
-    for (let k = 2; k < half - 1; k++) {
-      const m = mag[k]
-      if (m <= floor) continue
-      if (m <= mag[k - 1] || m < mag[k + 1]) continue // local maximum only
-      const a = mag[k - 1]
-      const c = mag[k + 1]
-      const denom = a - 2 * m + c
-      const delta = denom !== 0 ? (0.5 * (a - c)) / denom : 0
-      const freq = ((k + delta) * sampleRate) / FRAME
-      if (freq < fMin || freq > fMax) continue
-      // Weight the bass register more: the tonic/root is most often carried by the
-      // bass, so this biases KS toward the true tonic and away from the dominant /
-      // subdominant (the dominant i↔v and subdominant i↔iv mix-ups are the main
-      // remaining key errors on real loops).
-      const w = bassBias ? (freq < 150 ? 3 : freq < 300 ? 2 : freq < 600 ? 1.3 : 1) : 1
-      const addPitchClass = (f: number, amount: number): void => {
-        if (f < fMin || f > fMax) return
-        const midi = 69 + 12 * Math.log2(f / 440)
-        const pc = (((Math.round(midi) % 12) + 12) % 12)
-        fc[pc] += amount
-      }
-
-      addPitchClass(freq, m * w)
-      if (harmonicFolding) {
-        // Real samples are rich in overtones; raw chroma can mistake harmonics for
-        // played notes. A small inverse-harmonic vote lets strong partials point
-        // back toward their likely fundamentals without drowning out actual notes.
-        for (let h = 2; h <= 6; h++) addPitchClass(freq / h, (m * w * 0.26) / h)
-      }
-    }
-    // Normalise each frame to unit sum before accumulating. Key is determined by WHICH
-    // notes are used over time (the scale), not by how loud or sustained any one note
-    // is — otherwise a held bass note or a prominent dominant dominates the whole
-    // chromagram and KS locks onto the fifth/fourth/relative instead of the tonic.
-    let fsum = 0
-    for (let i = 0; i < 12; i++) fsum += fc[i]
-    if (fsum > 0) for (let i = 0; i < 12; i++) chroma[i] += fc[i] / fsum
-  }
-
-  if (len < FRAME) addFrame(0)
-  else for (let start = 0; start + FRAME <= len; start += HOP) addFrame(start)
-
-  let sum = 0
-  for (let i = 0; i < 12; i++) sum += chroma[i]
-  if (sum > 0) for (let i = 0; i < 12; i++) chroma[i] /= sum
-  return chroma
-}
-
-function entropy12(chroma: ArrayLike<number>): number {
-  let h = 0
-  let sum = 0
-  for (let i = 0; i < 12; i++) sum += chroma[i]
-  if (sum <= 0) return 1
-  for (let i = 0; i < 12; i++) {
-    const p = chroma[i] / sum
-    if (p > 0) h -= p * Math.log(p)
-  }
-  return h / Math.log(12)
-}
-
-function pearson(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  let ma = 0
-  let mb = 0
-  for (let i = 0; i < 12; i++) {
-    ma += a[i]
-    mb += b[i]
-  }
-  ma /= 12
-  mb /= 12
-  let num = 0
-  let da = 0
-  let db = 0
-  for (let i = 0; i < 12; i++) {
-    const x = a[i] - ma
-    const y = b[i] - mb
-    num += x * y
-    da += x * x
-    db += y * y
-  }
-  if (da === 0 || db === 0) return 0
-  return num / Math.sqrt(da * db)
-}
-
-export interface KeyEstimate {
-  tonic: string | null
-  mode: KeyMode | null
-  confidence: number
-  diagnostics?: KeyDecisionDiagnostics
-}
-
 export type ActiveRegion = readonly [number, number]
 
-interface PitchEstimate {
+export interface PitchEstimate {
   tonic: string
   confidence: number
   clarity: number
-}
-
-const MAJOR_SCALE = new Set([0, 2, 4, 5, 7, 9, 11])
-const MINOR_SCALE = new Set([0, 2, 3, 5, 7, 8, 10])
-
-interface KeyCandidate {
-  tonic: number
-  mode: KeyMode
-  corr: number
-  rank: number
-  scaleFit: number
-  rootSupport: number
-}
-
-function activeDurationFromRegion(region: ActiveRegion, sampleRate: number): number {
-  const [start, end] = region
-  return Math.max(0, end - start + 1) / sampleRate
-}
-
-function keyAnalysisRanges(samples: Float32Array, sampleRate: number, region: ActiveRegion): ActiveRegion[] {
-  const [start, end] = region
-  if (end <= start) return [[0, Math.max(0, samples.length - 1)]]
-  const activeLen = end - start + 1
-  const maxLen = Math.floor(sampleRate * KEY_ANALYSIS_SECONDS)
-  const pad = Math.floor(sampleRate * 0.05)
-  if (activeLen <= maxLen) {
-    return [[Math.max(0, start - pad), Math.min(samples.length - 1, end + pad)]]
-  }
-
-  const sectionLen = Math.min(activeLen, Math.floor(sampleRate * KEY_SECTION_SECONDS))
-  const lastStart = Math.max(start, end - sectionLen + 1)
-  const ranges: ActiveRegion[] = []
-  for (let i = 0; i < KEY_MAX_SECTIONS; i++) {
-    const frac = i / (KEY_MAX_SECTIONS - 1)
-    const sectionStart = Math.min(lastStart, start + Math.round((activeLen - sectionLen) * frac))
-    const from = Math.max(0, sectionStart - pad)
-    const to = Math.min(samples.length - 1, sectionStart + sectionLen - 1 + pad)
-    const prev = ranges[ranges.length - 1]
-    if (!prev || from - prev[0] > Math.floor(sampleRate * 0.5)) ranges.push([from, to])
-  }
-  return ranges
-}
-
-function chromaEvidence(chroma: ArrayLike<number>): number {
-  let sum = 0
-  const sorted: number[] = []
-  for (let i = 0; i < 12; i++) {
-    const v = chroma[i] ?? 0
-    sum += v
-    sorted.push(v)
-  }
-  if (sum <= 0) return 0
-  sorted.sort((a, b) => b - a)
-  const top3 = (sorted[0] + sorted[1] + sorted[2]) / sum
-  const entropy = entropy12(chroma)
-  return clamp01((top3 - 0.32) / 0.38) * 0.7 + clamp01((0.94 - entropy) / 0.42) * 0.3
-}
-
-function computeSectionChroma(
-  samples: Float32Array,
-  sampleRate: number,
-  ranges: ActiveRegion[],
-  options: ChromaOptions = {}
-): Float32Array {
-  const out = new Float32Array(12)
-  let totalWeight = 0
-  for (const [from, to] of ranges) {
-    const chroma = computeChroma(samples.subarray(from, to + 1), sampleRate, options)
-    const evidence = chromaEvidence(chroma)
-    if (evidence < 0.08) continue
-    const weight = 0.2 + evidence
-    for (let i = 0; i < 12; i++) out[i] += chroma[i] * weight
-    totalWeight += weight
-  }
-  if (totalWeight <= 0) return out
-  let sum = 0
-  for (let i = 0; i < 12; i++) sum += out[i]
-  if (sum > 0) for (let i = 0; i < 12; i++) out[i] /= sum
-  return out
-}
-
-/** Chroma peak-pick cross-check: returns the single dominant pitch class, if any. */
-function detectSinglePitchFromChroma(chroma: ArrayLike<number>): PitchEstimate | null {
-  let sum = 0
-  let max = 0
-  let second = 0
-  let best = 0
-  for (let i = 0; i < 12; i++) {
-    const v = chroma[i]
-    sum += v
-    if (v > max) {
-      second = max
-      max = v
-      best = i
-    } else if (v > second) {
-      second = v
-    }
-  }
-  if (sum <= 0) return null
-  const peak = max / sum
-  const contrast = (max - second) / sum
-  const confidence = clamp01((peak - 0.42) / 0.36) * 0.65 + clamp01((contrast - 0.18) / 0.3) * 0.35
-  if (confidence < 0.4) return null
-  return { tonic: PITCH_CLASSES[best], confidence: Math.min(0.9, confidence), clarity: peak }
 }
 
 /** Run YIN over a single window, returning the fundamental frequency and clarity. */
@@ -356,7 +106,7 @@ function yinWindow(x: Float32Array, offset: number, W: number, sampleRate: numbe
  * attack transient and votes across overlapping windows of the sustained body,
  * weighting by per-window clarity — robust for tuned drum hits and one-shots.
  */
-function estimatePitchClass(
+export function estimatePitchClass(
   samples: Float32Array,
   sampleRate: number,
   region: ActiveRegion = activeRegion(samples)
@@ -456,294 +206,6 @@ function estimatePitchClass(
   return { tonic: PITCH_CLASSES[bestPc], confidence: Math.min(0.97, confidence), clarity: bestClarity }
 }
 
-function scaleFitScore(chroma: ArrayLike<number>, tonic: number, mode: KeyMode): number {
-  const scale = mode === 'major' ? MAJOR_SCALE : MINOR_SCALE
-  let inside = 0
-  let outside = 0
-  for (let i = 0; i < 12; i++) {
-    const degree = (i - tonic + 12) % 12
-    if (scale.has(degree)) inside += chroma[i] ?? 0
-    else outside += chroma[i] ?? 0
-  }
-  return inside - outside * 1.15
-}
-
-function rootSupport(chroma: ArrayLike<number>, tonic: number): number {
-  let maxOther = 0
-  for (let i = 0; i < 12; i++) {
-    if (i !== tonic) maxOther = Math.max(maxOther, chroma[i] ?? 0)
-  }
-  const root = chroma[tonic] ?? 0
-  return root + Math.max(0, root - maxOther) * 0.65
-}
-
-function triadSupport(chroma: ArrayLike<number>, tonic: number, mode: KeyMode): number {
-  const root = chroma[tonic] ?? 0
-  const third = chroma[(tonic + (mode === 'major' ? 4 : 3)) % 12] ?? 0
-  const otherThird = chroma[(tonic + (mode === 'major' ? 3 : 4)) % 12] ?? 0
-  const fifth = chroma[(tonic + 7) % 12] ?? 0
-  return root * 0.8 + third * 0.55 + fifth * 0.45 - otherThird * 0.25
-}
-
-/** Estimate key from chroma using KS correlation plus scale, triad, and bass-root evidence. */
-export function detectKeyFromChroma(chroma: ArrayLike<number>, rootChroma?: ArrayLike<number>): KeyEstimate {
-  let sum = 0
-  for (let i = 0; i < 12; i++) sum += chroma[i]
-  if (sum <= 0) return { tonic: null, mode: null, confidence: 0 }
-
-  let rootHintSum = 0
-  if (rootChroma) for (let i = 0; i < 12; i++) rootHintSum += rootChroma[i] ?? 0
-
-  const candidates: KeyCandidate[] = []
-
-  const consider = (corr: number, tonic: number, mode: KeyMode): void => {
-    const scaleFit = scaleFitScore(chroma, tonic, mode)
-    const broadRoot = rootSupport(chroma, tonic)
-    const bassRoot = rootChroma && rootHintSum > 0 ? rootSupport(rootChroma, tonic) : 0
-    const triad = triadSupport(chroma, tonic, mode)
-    const root = bassRoot > 0 ? bassRoot : broadRoot
-    const rank = corr + scaleFit * 0.24 + root * 0.18 + triad * 0.12
-    candidates.push({ tonic, mode, corr, rank, scaleFit, rootSupport: root })
-  }
-
-  const majRot = new Array<number>(12)
-  const minRot = new Array<number>(12)
-  for (let t = 0; t < 12; t++) {
-    for (let i = 0; i < 12; i++) {
-      majRot[i] = KS_MAJOR[(i - t + 12) % 12]
-      minRot[i] = KS_MINOR[(i - t + 12) % 12]
-    }
-    consider(pearson(chroma, majRot), t, 'major')
-    consider(pearson(chroma, minRot), t, 'minor')
-  }
-
-  candidates.sort((a, b) => b.rank - a.rank)
-  const best = candidates[0]
-  const second = candidates[1]
-  if (!best) return { tonic: null, mode: null, confidence: 0 }
-  const margin = Math.max(0, best.rank - (second?.rank ?? -Infinity))
-  const corrFit = clamp01((best.corr - 0.14) / 0.58)
-  const scaleFit = clamp01((best.scaleFit - 0.2) / 0.62)
-  const rootFit = clamp01(best.rootSupport / 0.18)
-  const marginFit = clamp01(margin / 0.18)
-  const base = corrFit * 0.68 + scaleFit * 0.2 + rootFit * 0.12
-  const confidence = clamp01(base * (0.54 + marginFit * 0.46))
-  return { tonic: PITCH_CLASSES[best.tonic], mode: best.mode, confidence: Math.min(0.95, confidence) }
-}
-
-function modeWithThirdEvidence(chroma: ArrayLike<number>, tonic: string | null, mode: KeyMode | null): KeyMode | null {
-  if (!tonic || !mode) return null
-  const tonicIndex = PITCH_CLASSES.indexOf(tonic as (typeof PITCH_CLASSES)[number])
-  if (tonicIndex < 0) return null
-
-  const thirdIndex = (tonicIndex + (mode === 'major' ? 4 : 3)) % 12
-  const otherThirdIndex = (tonicIndex + (mode === 'major' ? 3 : 4)) % 12
-  const fifthIndex = (tonicIndex + 7) % 12
-  const root = chroma[tonicIndex] ?? 0
-  const third = chroma[thirdIndex] ?? 0
-  const otherThird = chroma[otherThirdIndex] ?? 0
-  const fifth = chroma[fifthIndex] ?? 0
-
-  // Harmonic spectra from a single note/root-fifth can look "major" because the
-  // fifth harmonic lands on the major third. Require the third to be a meaningful
-  // part of the chroma before claiming major/minor; otherwise report tonic-only.
-  const strongEnough = third >= 0.045 || third >= root * 0.11 || third >= fifth * 0.45
-  const distinguishable = otherThird <= 0.015 || third >= otherThird * 1.2
-  return strongEnough && distinguishable ? mode : null
-}
-
-function keyEstimateDiagnostics(
-  reason: string,
-  confidence: number,
-  evidence: KeyEvidenceItem[]
-): KeyDecisionDiagnostics {
-  return {
-    evidence: [
-      { name: 'analyzerReason', value: reason, confidence },
-      ...evidence
-    ]
-  }
-}
-
-/**
- * Detect the musical key of any sound. Fuses a monophonic pitch estimate (great
- * for one-shots and tuned percussion) with a Krumhansl–Schmuckler chroma estimate
- * (great for chords/loops). Mode is only assigned when the content is genuinely
- * polyphonic — a single tuned hit gets a tonic with an open (null) mode.
- */
-export function analyzeKey(
-  samples: Float32Array,
-  sampleRate: number,
-  region: ActiveRegion = activeRegion(samples)
-): KeyEstimate {
-  const pitch = estimatePitchClass(samples, sampleRate, region)
-  const ranges = keyAnalysisRanges(samples, sampleRate, region)
-  const chroma = computeSectionChroma(samples, sampleRate, ranges)
-  const rootChroma = computeSectionChroma(samples, sampleRate, ranges, { fMax: ROOT_CHROMA_FMAX, harmonicFolding: false })
-  const ks = detectKeyFromChroma(chroma, rootChroma)
-  const peak = detectSinglePitchFromChroma(chroma)
-
-  // Shape of the chroma distribution. A single note concentrates almost all mass
-  // in one class; a chord/loop spreads it across a few; broadband noise spreads it
-  // across all twelve (so even its top three classes hold little mass).
-  let concentration = 0
-  const sorted = [...chroma].sort((a, b) => b - a)
-  const top3 = sorted[0] + sorted[1] + sorted[2]
-  for (let i = 0; i < 12; i++) concentration = Math.max(concentration, chroma[i])
-  const entropy = entropy12(chroma)
-  const polyphonic = concentration < 0.58 && (top3 >= 0.46 || entropy < 0.9)
-  const tonalChroma = top3 >= 0.43 || (top3 >= 0.34 && entropy < 0.9) // structured enough to be music, not noise
-  const dur = activeDurationFromRegion(region, sampleRate)
-  const baseEvidence: KeyEvidenceItem[] = [
-    { name: 'activeDurationSec', value: Number(dur.toFixed(3)) },
-    { name: 'top3ChromaShare', value: Number(top3.toFixed(3)) },
-    { name: 'chromaConcentration', value: Number(concentration.toFixed(3)) },
-    { name: 'chromaEntropy', value: Number(entropy.toFixed(3)) },
-    { name: 'tonalChroma', value: tonalChroma },
-    { name: 'polyphonic', value: polyphonic }
-  ]
-  if (pitch) baseEvidence.push({ name: `pitch:${pitch.tonic}`, value: pitch.clarity.toFixed(3), confidence: pitch.confidence })
-  if (ks.tonic) baseEvidence.push({ name: `ks:${ks.tonic}:${ks.mode ?? 'unknown'}`, value: ks.confidence, confidence: ks.confidence })
-  if (peak) baseEvidence.push({ name: `chromaPeak:${peak.tonic}`, value: peak.clarity.toFixed(3), confidence: peak.confidence })
-
-  // A single tuned tone — a one-shot or a sustained single note — is read by the
-  // monophonic pitch tracker. A musical PHRASE (loop, melody, chord progression) is
-  // read by the whole-distribution chroma + KS estimate: validated on a real library,
-  // running the pitch tracker on a phrase locks onto whatever note is sounding (often
-  // the bass or the dominant) and is the single biggest source of perfect-fifth /
-  // -fourth key errors. So restrict the pitch path to short hits or a chroma so
-  // concentrated it is effectively one held note.
-  const monophonicHit =
-    !!pitch &&
-    pitch.confidence >= 0.5 &&
-    (dur <= 1.3 || concentration >= 0.72 || (pitch.confidence >= 0.72 && peak?.tonic === pitch.tonic && top3 < 0.78))
-
-  // 1. Single tuned tone → pitch tracker owns the tonic. Mode stays open unless the
-  //    chroma is clearly polyphonic and agrees (a held stacked chord, not one note).
-  if (monophonicHit && pitch) {
-    const agree = !!ks.tonic && ks.tonic === pitch.tonic
-    const mode = agree && ks.confidence >= 0.5 && polyphonic ? modeWithThirdEvidence(chroma, ks.tonic, ks.mode) : null
-    let conf = pitch.confidence
-    if (agree) conf = Math.min(0.97, conf + 0.06)
-    if (peak?.tonic === pitch.tonic) conf = Math.min(0.97, conf + 0.03)
-    return {
-      tonic: pitch.tonic,
-      mode,
-      confidence: conf,
-      diagnostics: keyEstimateDiagnostics('monophonic-pitch', conf, baseEvidence)
-    }
-  }
-
-  // 2. Musical phrase / chord / sustained content → chroma + KS owns tonic AND mode.
-  //    A corroborating pitch estimate nudges confidence up.
-  if (ks.tonic && tonalChroma && ks.confidence >= 0.38) {
-    const mode = modeWithThirdEvidence(chroma, ks.tonic, ks.mode)
-    const conf = pitch?.tonic === ks.tonic ? Math.min(0.97, ks.confidence + 0.05) : ks.confidence
-    return {
-      tonic: ks.tonic,
-      mode,
-      confidence: conf,
-      diagnostics: keyEstimateDiagnostics('chroma-ks', conf, baseEvidence)
-    }
-  }
-
-  // 3. Weaker single-source fallbacks.
-  if (pitch && pitch.confidence >= 0.5) {
-    return {
-      tonic: pitch.tonic,
-      mode: null,
-      confidence: pitch.confidence,
-      diagnostics: keyEstimateDiagnostics('fallback-pitch', pitch.confidence, baseEvidence)
-    }
-  }
-  if (ks.tonic && tonalChroma) {
-    return {
-      tonic: ks.tonic,
-      mode: polyphonic ? modeWithThirdEvidence(chroma, ks.tonic, ks.mode) : null,
-      confidence: ks.confidence,
-      diagnostics: keyEstimateDiagnostics('fallback-chroma-ks', ks.confidence, baseEvidence)
-    }
-  }
-  if (peak && peak.confidence >= 0.4 && tonalChroma) {
-    return {
-      tonic: peak.tonic,
-      mode: null,
-      confidence: peak.confidence,
-      diagnostics: keyEstimateDiagnostics('fallback-chroma-peak', peak.confidence, baseEvidence)
-    }
-  }
-  return {
-    tonic: null,
-    mode: null,
-    confidence: 0,
-    diagnostics: keyEstimateDiagnostics('insufficient-tonal-evidence', 0, baseEvidence)
-  }
-}
-
-export interface BpmEstimate {
-  bpm: number | null
-  confidence: number
-}
-
-/** Estimate tempo via an onset-energy envelope + autocorrelation. Best-effort. */
-export function analyzeBpm(samples: Float32Array, sampleRate: number): BpmEstimate {
-  const W = 1024
-  const H = 512
-  if (samples.length < sampleRate * 1.5) return { bpm: null, confidence: 0 }
-  const nFrames = Math.floor((samples.length - W) / H)
-  if (nFrames < 32) return { bpm: null, confidence: 0 }
-
-  const env = new Float32Array(nFrames)
-  let prevRms = 0
-  for (let f = 0; f < nFrames; f++) {
-    const start = f * H
-    let sumSq = 0
-    for (let i = 0; i < W; i++) {
-      const v = samples[start + i]
-      sumSq += v * v
-    }
-    const rms = Math.sqrt(sumSq / W)
-    env[f] = Math.max(0, rms - prevRms) // positive-going energy = onset
-    prevRms = rms
-  }
-
-  let mean = 0
-  for (let i = 0; i < nFrames; i++) mean += env[i]
-  mean /= nFrames
-  for (let i = 0; i < nFrames; i++) env[i] = Math.max(0, env[i] - mean)
-
-  const envHop = H / sampleRate
-  const lagAt = (bpm: number): number => Math.round(60 / bpm / envHop)
-  const lagMin = Math.max(1, lagAt(200))
-  const lagMax = Math.min(nFrames - 1, lagAt(60))
-
-  let bestLag = -1
-  let bestVal = 0
-  let total = 0
-  let count = 0
-  for (let lag = lagMin; lag <= lagMax; lag++) {
-    let ac = 0
-    for (let i = 0; i + lag < nFrames; i++) ac += env[i] * env[i + lag]
-    total += ac
-    count++
-    if (ac > bestVal) {
-      bestVal = ac
-      bestLag = lag
-    }
-  }
-  if (bestLag < 0 || bestVal <= 0) return { bpm: null, confidence: 0 }
-
-  let bpm = 60 / (bestLag * envHop)
-  while (bpm < 70) bpm *= 2
-  while (bpm > 190) bpm /= 2
-
-  const meanAc = count > 0 ? total / count : 0
-  const prominence = meanAc > 0 ? bestVal / meanAc : 0
-  const confidence = Math.max(0, Math.min(0.9, (prominence - 1) / 3))
-  if (confidence < 0.25) return { bpm: null, confidence }
-  return { bpm: Math.round(bpm), confidence }
-}
-
 // ---- Audio-based drum / one-shot classification ----
 
 export interface DrumFeatures {
@@ -778,6 +240,31 @@ export function activeRegion(samples: Float32Array): ActiveRegion {
   let end = samples.length - 1
   while (end > start && Math.abs(samples[end]) < thr) end--
   return [start, Math.max(start, end)]
+}
+
+/** Count distinct hits (sharp energy rises ≥ 60 ms apart) across a span of audio. */
+function countHits(samples: Float32Array, sampleRate: number, start: number, end: number): number {
+  const hop = Math.max(1, Math.round(sampleRate * 0.01))
+  const env: number[] = []
+  for (let i = start; i + hop <= end; i += hop) {
+    let e = 0
+    for (let j = 0; j < hop; j++) e += samples[i + j] * samples[i + j]
+    env.push(Math.sqrt(e / hop))
+  }
+  const rise: number[] = env.map((v, i) => (i > 0 ? Math.max(0, v - env[i - 1]) : 0))
+  let max = 0
+  for (const v of rise) max = Math.max(max, v)
+  if (max <= 0) return 0
+  const minGap = Math.round(0.06 / 0.01)
+  let hits = 0
+  let last = -minGap
+  for (let i = 1; i < rise.length - 1; i++) {
+    if (rise[i] >= max * 0.3 && rise[i] >= rise[i - 1] && rise[i] > rise[i + 1] && i - last >= minGap) {
+      hits++
+      last = i
+    }
+  }
+  return hits
 }
 
 /** Classify a percussive sound (or detect that it is actually sustained/melodic) from audio. */
@@ -929,6 +416,12 @@ export function analyzeDrum(
       confidence: Math.min(0.9, 0.45 + tonality * 0.35 + Math.min(0.15, decay * 0.12)),
       features
     }
+  }
+
+  // A long sound with many separate hits is a drum *loop* (break, groove, top loop),
+  // not a one-shot — whatever its dominant timbre.
+  if (activeDuration >= 1.5 && countHits(samples, sampleRate, aStart, aEnd) >= 4) {
+    return { type: 'drum', subtype: 'loop', confidence: 0.75, features }
   }
 
   let subtype: string

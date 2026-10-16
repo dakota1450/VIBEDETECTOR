@@ -8,3 +8,4 @@ dist/
 _libtest.txt
 index.mjs
 analysis.worker-*.js
+__pycache__/

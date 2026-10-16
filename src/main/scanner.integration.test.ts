@@ -118,3 +118,24 @@ describe('scanner integration (real WAV fixtures)', () => {
     expect(after.bpmSource).toBe('manual')
   })
 })
+
+describe('filename re-parse on parser upgrades', () => {
+  it('corrects a stale filename key from an older parser without the file changing', async () => {
+    const { mkdtempSync, copyFileSync } = await import('fs')
+    const dir = mkdtempSync(join(tmpdir(), 'vibe-names-'))
+    copyFileSync(join(process.cwd(), 'fixtures', 'Melodics', 'Lush_Pad_Fmaj.wav'), join(dir, 'DBM_RF2_72_Piano_Loop_Luxury_Dmin.wav'))
+    const s2 = new Store(join(tmpdir(), `vibe-names-${Date.now()}.json`))
+    await s2.load()
+    const src = s2.addSource(dir, 'names')
+    await scanSources(s2, [src])
+    const sound = s2.getSounds()[0]
+    expect(sound).toMatchObject({ keyTonic: 'D', keyMode: 'minor', keySource: 'filename' })
+
+    // Simulate a library written by the old parser (which read "DBM_" as D♭ minor).
+    sound.keyTonic = 'C#'
+    sound.keyMode = 'minor'
+    sound.nameVersion = 1
+    await scanSources(s2, [src])
+    expect(s2.getSounds()[0]).toMatchObject({ keyTonic: 'D', keyMode: 'minor', keySource: 'filename' })
+  })
+})

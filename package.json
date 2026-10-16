@@ -1,6 +1,6 @@
 {
   "name": "vibe-detector",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Detect the vibe of every sound — key, tempo & type aware sample browser for producers.",
   "author": "Vibe Detector",
   "license": "MIT",
@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark:key": "node scripts/key-detection-benchmark.mjs",
+    "eval": "node scripts/eval/run-eval.mjs",
     "site": "node scripts/serve-site.mjs",
     "dist:dir": "electron-vite build && electron-builder --mac --dir",
     "dist:mac": "electron-vite build && electron-builder --mac",

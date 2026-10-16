@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { AnalysisJob, AnalysisResult } from '@shared/types'
+import type { AnalysisJob, AnalysisResult, WorkerJobMessage } from '@shared/types'
 
 const ANALYSIS_SAMPLE_RATE = 22050
 const MAX_SECONDS = 30
@@ -9,8 +9,9 @@ const ANALYSIS_BATCH_PAUSE_MS = 60
 const ANALYSIS_JOB_TIMEOUT_MS = 30000
 const DECODE_TIMEOUT_MS = 20000
 // Spread decoding + DSP across cores. One worker per slot, each with its own decode
-// context, so several samples are analyzed at once instead of one-at-a-time.
-const ANALYSIS_POOL_SIZE = Math.max(1, Math.min(4, ((globalThis.navigator?.hardwareConcurrency ?? 4) - 1)))
+// context, so several samples are analyzed at once instead of one-at-a-time. Half the
+// hardware threads (2–6) keeps a big first pass quick while the UI stays responsive.
+const ANALYSIS_POOL_SIZE = Math.max(1, Math.min(6, Math.floor((globalThis.navigator?.hardwareConcurrency ?? 4) / 2)))
 const NORMALIZE_PEAK = 0.95
 const NORMALIZE_FLOOR = 0.0005
 const WAVEFORM_VERSION = 1
@@ -34,7 +35,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 async function decodeMono(
   ctx: OfflineAudioContext,
   url: string
-): Promise<{ samples: Float32Array; sampleRate: number; peaks: number[] } | null> {
+): Promise<{ samples: Float32Array; sampleRate: number; durationSec: number; peaks: number[] } | null> {
   const resp = await fetch(url)
   if (!resp.ok) return null
   const arrayBuffer = await resp.arrayBuffer()
@@ -47,7 +48,9 @@ async function decodeMono(
     for (let i = 0; i < len; i++) mono[i] += data[i] / ch
   }
   const peaks = computeWaveformPeaks(mono, WAVEFORM_BUCKETS)
-  return { ...prepareAnalysisSamples(mono, buf.sampleRate), peaks }
+  // The exact full length (before the 30 s analysis cap) lets the tempo detector lock
+  // onto the loop's bar grid.
+  return { ...prepareAnalysisSamples(mono, buf.sampleRate), durationSec: buf.length / buf.sampleRate, peaks }
 }
 
 function computeWaveformPeaks(samples: Float32Array, buckets: number): number[] {
@@ -147,19 +150,19 @@ export function useAnalysis(): () => void {
           resolve({ id: job.id, peaks, error: 'analysis_timeout' })
         }, ANALYSIS_JOB_TIMEOUT_MS)
         worker.addEventListener('message', onMsg)
-        const buffer = decoded.samples.buffer
-        worker.postMessage(
-          {
-            id: job.id,
-            buffer,
-            sampleRate: decoded.sampleRate,
-            needsKey: job.needsKey,
-            needsBpm: job.needsBpm,
-            classifyDrum: job.classifyDrum,
-            isDrum: job.isDrum
-          },
-          [buffer]
-        )
+        const buffer = decoded.samples.buffer as ArrayBuffer
+        const msg: WorkerJobMessage = {
+          id: job.id,
+          buffer,
+          sampleRate: decoded.sampleRate,
+          durationSec: decoded.durationSec,
+          needsKey: job.needsKey,
+          needsBpm: job.needsBpm,
+          classifyDrum: job.classifyDrum,
+          isDrum: job.isDrum,
+          subtype: job.subtype
+        }
+        worker.postMessage(msg, [buffer])
       })
     } catch {
       return { id: job.id, error: 'decode_failed' }

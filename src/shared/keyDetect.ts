@@ -30,6 +30,22 @@ interface Cand {
   tonic: string
   mode: KeyMode | null
   score: number
+  /** Position in the name — producers put the key last, so later wins ties. */
+  pos: number
+}
+
+/**
+ * Is a letter + "b" at `index` really a flat (Bb, Eb, Dbm) rather than part of an
+ * all-caps pack code (AB_, BB3_, DBM_, CB2_)? A flat is an uppercase note with a
+ * lowercase "b" — or anything in an all-lowercase name.
+ */
+function isFlatSpelling(orig: string, index: number): boolean {
+  const note = orig[index]
+  const flat = orig[index + 1]
+  if (flat === '♭') return true
+  if (note >= 'A' && note <= 'G' && flat === 'b') return true
+  if (note >= 'a' && note <= 'g' && flat === 'b') return orig === orig.toLowerCase()
+  return false
 }
 
 function modeFrom(raw: string | undefined): KeyMode | null {
@@ -47,54 +63,61 @@ export function detectKeyFromName(filename: string): DetectedKey {
   const sLower = normalizeName(filename).toLowerCase()
   const sOrig = normalizeName(filename)
   const cands: Cand[] = []
-  const push = (tonicRaw: string, mode: KeyMode | null, score: number): void => {
+  const push = (tonicRaw: string, mode: KeyMode | null, score: number, pos = 0): void => {
     const tonic = normalizeTonic(tonicRaw)
-    if (tonic) cands.push({ tonic, mode, score })
+    if (tonic) cands.push({ tonic, mode, score, pos })
   }
 
   // 1. Camelot wheel notation (e.g. 8A, 11B)
   for (const m of sLower.matchAll(/(?<![a-z0-9])(1[0-2]|[1-9])([ab])(?![a-z0-9])/g)) {
     const k = CAMELOT_TO_KEY[m[1] + m[2].toUpperCase()]
-    if (k) cands.push({ tonic: k.tonic, mode: k.mode, score: 6 })
+    if (k) cands.push({ tonic: k.tonic, mode: k.mode, score: 6, pos: m.index ?? 0 })
   }
 
   // 2. note + accidental (+ optional mode), e.g. F#min, F# minor, Bbmaj, Eb, C#m
   for (const m of sLower.matchAll(/(?<![a-z0-9])([a-g])([#♯b♭])\s*(maj(?:or)?|min(?:or)?|m)?(?![a-z])/g)) {
+    if ((m[2] === 'b' || m[2] === '♭') && !isFlatSpelling(sOrig, m.index ?? 0)) continue
     const mp = m[3]
     let mode: KeyMode | null = null
     let score = 3
     if (mp) {
       mode = mp.startsWith('maj') ? 'major' : 'minor'
+      // "A#M" / "BbM": a capital M is the major-chord convention — unless the whole
+      // name is in caps, where case carries no meaning.
+      const mAt = (m.index ?? 0) + m[0].length - mp.length
+      if (mp === 'm' && sOrig[mAt] === 'M' && sOrig !== sOrig.toUpperCase()) mode = 'major'
       score = 5
     }
-    push(m[1] + accidental(m[2]), mode, score)
+    push(m[1] + accidental(m[2]), mode, score, m.index ?? 0)
   }
 
   // 3. note + explicit mode word, no accidental, e.g. Cmaj, C major, Amin, A minor
   for (const m of sLower.matchAll(/(?<![a-z0-9])([a-g])\s*(maj(?:or)?|min(?:or)?)(?![a-z])/g)) {
-    push(m[1], m[2].startsWith('maj') ? 'major' : 'minor', 5)
+    push(m[1], m[2].startsWith('maj') ? 'major' : 'minor', 5, m.index ?? 0)
   }
 
   // 4. uppercase note + lowercase m => minor (e.g. Am, Cm, Am7) — uppercase avoids the word "am"
   for (const m of sOrig.matchAll(/(?<![A-Za-z0-9])([A-G])m(?:7|9|11|13)?(?![A-Za-z])/g)) {
-    push(m[1], 'minor', 4)
+    push(m[1], 'minor', 4, m.index ?? 0)
   }
 
   // 5. contextual bare-key phrases, e.g. "guitar in A", "Kick C", "808 F".
   const safeBareKeyContext = BARE_KEY_CONTEXT.test(sLower) && !NOISY_DRUM_CONTEXT.test(sLower)
   if (safeBareKeyContext) {
     for (const m of sLower.matchAll(/(?<![a-z0-9])(?:in|key\s*(?:of)?|root(?:\s*note)?)\s+([a-g])([#♯b♭]?)(?:\s*(maj(?:or)?|min(?:or)?))?(?![a-z])/g)) {
-      push(m[1] + accidental(m[2]), modeFrom(m[3]), m[3] ? 4 : 3)
+      push(m[1] + accidental(m[2]), modeFrom(m[3]), m[3] ? 4 : 3, m.index ?? 0)
     }
     for (const m of sOrig.matchAll(/(?<![A-Za-z0-9])([A-G])([#♯b♭]?)(?![A-Za-z0-9])/g)) {
       const before = sOrig.slice(0, m.index ?? 0).toLowerCase()
-      if (BARE_KEY_CONTEXT.test(before)) push(m[1] + accidental(m[2]), null, m[2] ? 3 : 2)
+      if (BARE_KEY_CONTEXT.test(before)) push(m[1] + accidental(m[2]), null, m[2] ? 3 : 2, m.index ?? 0)
     }
   }
 
   // 6. note + optional accidental + octave digit => pitched one-shot (mode unknown)
   for (const m of sLower.matchAll(/(?<![a-z0-9])([a-g])([#♯b♭]?)([0-8])(?![a-z0-9])/g)) {
-    push(m[1] + accidental(m[2]), null, m[2] ? 3 : 2)
+    // An octave-numbered flat must be spelled unambiguously ("Bb2", not the pack code "bb2").
+    if ((m[2] === 'b' && !/[A-G]/.test(sOrig[m.index ?? 0])) || ((m[2] === 'b' || m[2] === '♭') && !isFlatSpelling(sOrig, m.index ?? 0))) continue
+    push(m[1] + accidental(m[2]), null, m[2] ? 3 : 2, m.index ?? 0)
   }
 
   if (cands.length === 0) return { tonic: null, mode: null, confidence: 0, source: null }
@@ -103,11 +126,12 @@ export function detectKeyFromName(filename: string): DetectedKey {
   for (const c of cands) {
     const key = `${c.tonic}|${c.mode}`
     const prev = byKey.get(key)
-    if (!prev || c.score > prev.score) byKey.set(key, c)
+    if (!prev || c.score > prev.score || (c.score === prev.score && c.pos > prev.pos)) byKey.set(key, c)
   }
   const best = [...byKey.values()].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
-    return (b.mode ? 1 : 0) - (a.mode ? 1 : 0)
+    if ((b.mode ? 1 : 0) !== (a.mode ? 1 : 0)) return (b.mode ? 1 : 0) - (a.mode ? 1 : 0)
+    return b.pos - a.pos
   })[0]
 
   return {

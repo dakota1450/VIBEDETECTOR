@@ -1,6 +1,7 @@
 import type { LibraryFilter, Sound } from '@shared/types'
 import { CIRCLE_OF_FIFTHS } from '@shared/keyColors'
 import { bpmMatches } from '@shared/bpmDetect'
+import { compatibleKeys } from '@shared/camelot'
 
 export const defaultFilter: LibraryFilter = {
   search: '',
@@ -8,6 +9,7 @@ export const defaultFilter: LibraryFilter = {
   subtypes: [],
   keys: [],
   matchKeyAnyMode: false,
+  harmonicMatch: false,
   keyStatus: 'all',
   reviewStatus: 'all',
   bpmMin: null,
@@ -42,7 +44,24 @@ function needsReview(s: Sound): boolean {
   return !hasVerifiedKey(s)
 }
 
-function matchesFilter(s: Sound, f: LibraryFilter): boolean {
+/** The selected keys, widened to their Camelot neighbours when harmonic matching is on. */
+export function effectiveKeys(f: LibraryFilter): LibraryFilter['keys'] {
+  if (!f.harmonicMatch) return f.keys
+  const seen = new Set<string>()
+  const out: LibraryFilter['keys'] = []
+  for (const k of f.keys) {
+    for (const c of compatibleKeys(k.tonic, k.mode)) {
+      const id = `${c.tonic}|${c.mode}`
+      if (!seen.has(id)) {
+        seen.add(id)
+        out.push(c)
+      }
+    }
+  }
+  return out
+}
+
+function matchesFilter(s: Sound, f: LibraryFilter, keys: LibraryFilter['keys']): boolean {
   if (f.favoritesOnly && !s.isFavorite) return false
   if (f.sourceIds.length && !f.sourceIds.includes(s.sourceId)) return false
   if (f.reviewStatus === 'analysis_failed' && !s.analysisError) return false
@@ -52,10 +71,12 @@ function matchesFilter(s: Sound, f: LibraryFilter): boolean {
   if (f.subtypes.length) {
     if (!s.subtype || !f.subtypes.includes(s.subtype)) return false
   }
-  if (f.keys.length) {
+  if (keys.length) {
     if (!s.keyTonic) return false
-    const ok = f.keys.some((k) =>
-      f.matchKeyAnyMode ? k.tonic === s.keyTonic : k.tonic === s.keyTonic && k.mode === s.keyMode
+    // A sound with a tonic but no mode (a single note, an 808, a power chord) fits
+    // both the major and the minor key on that root.
+    const ok = keys.some(
+      (k) => k.tonic === s.keyTonic && (f.matchKeyAnyMode || s.keyMode == null || k.mode === s.keyMode)
     )
     if (!ok) return false
   }
@@ -106,5 +127,6 @@ function compare(a: Sound, b: Sound, f: LibraryFilter): number {
 }
 
 export function applyFilter(sounds: Sound[], f: LibraryFilter): Sound[] {
-  return sounds.filter((s) => matchesFilter(s, f)).sort((a, b) => compare(a, b, f))
+  const keys = effectiveKeys(f)
+  return sounds.filter((s) => matchesFilter(s, f, keys)).sort((a, b) => compare(a, b, f))
 }

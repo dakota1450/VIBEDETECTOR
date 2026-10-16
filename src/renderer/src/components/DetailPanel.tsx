@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { KeyMode, Sound, SoundType } from '@shared/types'
 import { useStore } from '../store/useStore'
 import { PITCH_CLASSES, keyColor, pitchIndex } from '@shared/keyColors'
-import { formatBytes, formatDuration, formatKeyLong } from '@shared/format'
+import { formatBpm, formatBytes, formatDuration, formatKey, formatKeyLong } from '@shared/format'
 import { keyToCamelot } from '@shared/camelot'
 import { bpmMatches } from '@shared/bpmDetect'
 import { KeyBadge, keyTrustLabel } from './KeyBadge'
@@ -76,7 +76,7 @@ export function DetailPanel(): JSX.Element | null {
 
   useEffect(() => {
     setTagInput('')
-    setBpmInput(s?.bpm != null ? String(Math.round(s.bpm)) : '')
+    setBpmInput(s?.bpm != null ? formatBpm(s.bpm) : '')
     setNotesInput(s?.notes ?? '')
   }, [s?.id, s?.bpm, s?.notes])
 
@@ -123,10 +123,10 @@ export function DetailPanel(): JSX.Element | null {
     }
     const bpm = Number(raw)
     if (!Number.isFinite(bpm) || bpm < 40 || bpm > 300) {
-      setBpmInput(s.bpm != null ? String(Math.round(s.bpm)) : '')
+      setBpmInput(s.bpm != null ? formatBpm(s.bpm) : '')
       return
     }
-    void override(s.id, { bpm: Math.round(bpm) })
+    void override(s.id, { bpm: Math.round(bpm * 100) / 100 })
   }
 
   const seg = (active: boolean): string =>
@@ -223,6 +223,36 @@ export function DetailPanel(): JSX.Element | null {
               Clear
             </button>
           </div>
+          {s.keyCandidates && s.keyCandidates.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">Audio reading</div>
+              <div className="space-y-1">
+                {s.keyCandidates.slice(0, 3).map((c) => {
+                  const col = keyColor(c.tonic, c.mode)
+                  const active = s.keyTonic === c.tonic && s.keyMode === c.mode
+                  return (
+                    <button
+                      key={`${c.tonic}${c.mode}`}
+                      onClick={() => void override(s.id, { keyTonic: c.tonic, keyMode: c.mode })}
+                      title={`Set key to ${formatKeyLong(c.tonic, c.mode)}`}
+                      className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-white/5"
+                    >
+                      <span className="w-9 shrink-0 text-xs font-semibold tabular-nums" style={{ color: col.text }}>
+                        {formatKey(c.tonic, c.mode)}
+                      </span>
+                      <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/6">
+                        <span
+                          className="absolute inset-y-0 left-0 rounded-full"
+                          style={{ width: `${Math.max(3, Math.round(c.p * 100))}%`, background: col.solid, opacity: active ? 1 : 0.7 }}
+                        />
+                      </span>
+                      <span className="w-9 shrink-0 text-right text-[10px] tabular-nums text-white/45">{Math.round(c.p * 100)}%</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
           {s.keyDiagnostics?.decision?.reason && (
             <p className="mt-2 text-[11px] leading-relaxed text-white/38">{s.keyDiagnostics.decision.reason}</p>
           )}
@@ -232,7 +262,9 @@ export function DetailPanel(): JSX.Element | null {
         <div>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-white/40">Tempo</h3>
-            <span className="text-[10px] text-white/35">{s.bpmSource ? `${s.bpmSource}${s.bpm != null ? ` · ${s.bpm} BPM` : ''}` : '—'}</span>
+            <span className="text-[10px] text-white/35">
+              {s.bpmSource ? `${s.bpmSource}${s.bpm != null ? ` · ${formatBpm(s.bpm)} BPM` : ''}${s.bpmConfidence > 0 && s.bpmSource === 'analysis' ? ` · ${Math.round(s.bpmConfidence * 100)}%` : ''}` : '—'}
+            </span>
           </div>
           <div className="flex gap-1.5">
             <input
@@ -264,6 +296,21 @@ export function DetailPanel(): JSX.Element | null {
               Clear
             </button>
           </div>
+          {s.bpm != null && s.bpmSource !== 'manual' && (
+            <div className="mt-2 flex items-center gap-1.5">
+              <span className="text-[10px] text-white/35">Feels like</span>
+              {(s.bpmAlternatives?.length ? s.bpmAlternatives : [s.bpm / 2, s.bpm * 2].filter((b) => b >= 45 && b <= 240)).map((b) => (
+                <button
+                  key={b}
+                  onClick={() => void override(s.id, { bpm: Math.round(b * 100) / 100 })}
+                  className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium tabular-nums text-white/65 border border-white/8 hover:bg-white/10"
+                  title={`Set tempo to ${formatBpm(b)} BPM`}
+                >
+                  {formatBpm(b)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Type */}
@@ -355,7 +402,7 @@ export function DetailPanel(): JSX.Element | null {
                     </div>
                     <div className="truncate text-[10px] text-white/35">{match.reasons.slice(0, 2).join(' · ')}</div>
                   </div>
-                  <span className="shrink-0 font-mono text-[10px] text-white/45">{match.sound.bpm != null ? `${match.sound.bpm}` : '—'}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-white/45">{formatBpm(match.sound.bpm)}</span>
                 </button>
               ))}
             </div>
@@ -386,7 +433,7 @@ export function DetailPanel(): JSX.Element | null {
               )}
             </span>
           </div>
-          <Field label="Tempo" value={s.bpm != null ? `${s.bpm} BPM (${s.bpmSource ?? '—'})` : '—'} />
+          <Field label="Tempo" value={s.bpm != null ? `${formatBpm(s.bpm)} BPM (${s.bpmSource ?? '—'})` : '—'} />
           <Field label="Duration" value={formatDuration(s.durationSec)} />
           <Field label="Sample rate" value={s.sampleRate ? `${(s.sampleRate / 1000).toFixed(1)} kHz` : '—'} />
           <Field label="Channels" value={s.channels === 1 ? 'Mono' : s.channels === 2 ? 'Stereo' : s.channels ? String(s.channels) : '—'} />

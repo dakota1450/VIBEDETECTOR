@@ -1,6 +1,7 @@
 import { useStore } from '../store/useStore'
 import { ScanIndicator } from './ScanIndicator'
-import { Radar, Search, X } from './icons'
+import { BrandMark } from './BrandMark'
+import { Search, X } from './icons'
 
 export function TopBar(): JSX.Element {
   const search = useStore((s) => s.filter.search)
@@ -8,12 +9,12 @@ export function TopBar(): JSX.Element {
 
   return (
     <header className="drag-region flex h-14 shrink-0 items-center gap-4 border-b border-white/5 px-4 pl-20">
-      <div className="flex items-center gap-2 select-none">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-vibe to-fuchsia-500 text-[#0b0b11] shadow-lg shadow-vibe/30">
-          <Radar width={17} height={17} />
+      <div className="flex items-center gap-2.5 select-none">
+        <span className="rounded-[7px] shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_6px_18px_-6px_rgba(139,92,255,0.55)]">
+          <BrandMark size={28} />
         </span>
-        <span className="text-[15px] font-bold tracking-tight">
-          VIBE<span className="bg-gradient-to-r from-vibe to-fuchsia-400 bg-clip-text text-transparent"> DETECTOR</span>
+        <span className="text-[13px] font-bold tracking-[0.14em] text-white/90">
+          VIBE <span className="font-semibold text-white/45">DETECTOR</span>
         </span>
       </div>
 

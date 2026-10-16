@@ -114,7 +114,10 @@ export function classify(input: {
   if (instrument) return { type: 'melodic', subtype: melodicSubtype(hay, dur, hasBpm) }
   // "Drum loop", "percussion", "break" → a drum, even with no kit-piece keyword. Subtype
   // stays generic so the audio classifier can refine the family (kick/hat/...) later.
-  if (drumContext) return { type: 'drum', subtype: /(?<![a-z])perc/.test(hay) ? 'perc' : 'other' }
+  if (drumContext) {
+    const loopish = /(?<![a-z])(?:loops?|breaks?|breakbeats?|grooves?|beats?|fills?|tops?)(?![a-z])/.test(hay)
+    return { type: 'drum', subtype: /(?<![a-z])perc/.test(hay) ? 'perc' : loopish ? 'loop' : 'other' }
+  }
   if (genericMelodic) return { type: 'melodic', subtype: melodicSubtype(hay, dur, hasBpm) }
 
   // An explicit key tag (accidental / maj-min / Camelot) implies tonal content.

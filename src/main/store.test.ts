@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { Store, needsAudioKey, type DetectedRecord } from './store'
+import { ANALYZER_VERSIONS, Store, looksLikeOneShot, needsAudioBpm, needsAudioKey, type DetectedRecord } from './store'
 
 function record(path: string, sourceId: number): DetectedRecord {
   return {
@@ -104,7 +104,7 @@ describe('Store hardening', () => {
     expect(needsAudioKey(unknown)).toBe(true)
   })
 
-  it('fills an unknown mode when audio agrees on the tonic', async () => {
+  it('fills an unknown mode and trusts the key more when audio agrees on the tonic', async () => {
     const store = new Store(join(tmpdir(), `vibe-store-mode-${Date.now()}.json`))
     await store.load()
     const source = store.addSource('/tmp/samples', 'Samples')
@@ -123,7 +123,7 @@ describe('Store hardening', () => {
     const updated = store.getSound(sound.id)!
     expect(updated.keyTonic).toBe('C')
     expect(updated.keyMode).toBe('major')
-    expect(updated.keyConfidence).toBe(0.7)
+    expect(updated.keyConfidence).toBeCloseTo(0.78)
     expect(updated.keySource).toBe('filename')
   })
 
@@ -216,9 +216,9 @@ describe('Store hardening', () => {
     ])
     const done = store.getSound(sound.id)!
     expect(done.needsAudioAnalysis).toBe(false)
-    expect(done.keyVersion).toBe(1)
-    expect(done.bpmVersion).toBe(1)
-    expect(done.typeVersion).toBe(1)
+    expect(done.keyVersion).toBe(ANALYZER_VERSIONS.key)
+    expect(done.bpmVersion).toBe(ANALYZER_VERSIONS.bpm)
+    expect(done.typeVersion).toBe(ANALYZER_VERSIONS.classify)
 
     // Simulate a key-algorithm update: the key step is stale again, the rest is not.
     done.keyVersion = 0
@@ -252,5 +252,94 @@ describe('Store hardening', () => {
     expect(updated.analysisError).toBeNull()
     expect(updated.analysisVersion).toBeNull()
     expect(updated.needsAudioAnalysis).toBe(true)
+  })
+})
+
+describe('Store tempo + key merging (v2 analyzers)', () => {
+  async function fresh(name: string): Promise<{ store: Store; sourceId: number }> {
+    const store = new Store(join(tmpdir(), `vibe-store-${name}-${Date.now()}-${Math.random()}.json`))
+    await store.load()
+    return { store, sourceId: store.addSource('/tmp/samples', 'Samples').id }
+  }
+
+  it('lets drum loops (not just melodic sounds) get an audio tempo', async () => {
+    const { store, sourceId } = await fresh('drumloop')
+    const loop = store.upsert({ ...record('/tmp/samples/drum-loop.wav', sourceId), filename: 'Drum_Loop_Dusty.wav', durationSec: 10.4, type: 'drum', subtype: 'other', typeSource: 'filename' })
+    expect(needsAudioBpm(loop)).toBe(true)
+    const kick = store.upsert({ ...record('/tmp/samples/kick.wav', sourceId), filename: 'Kick_01.wav', durationSec: 0.4, type: 'drum', subtype: 'kick', typeSource: 'filename' })
+    expect(needsAudioBpm(kick)).toBe(false)
+  })
+
+  it('skips tempo analysis for sounds named as one-shots', () => {
+    expect(looksLikeOneShot({ folder: 'Drums/One Shots', filename: 'Crash_Long.wav' })).toBe(true)
+    expect(looksLikeOneShot({ folder: 'Loops', filename: 'Kick_Loop_140.wav' })).toBe(false)
+    expect(looksLikeOneShot({ folder: 'Fills', filename: 'Tom_Fill.wav' })).toBe(false)
+  })
+
+  it('fills a missing tempo from audio and keeps half/double alternatives', async () => {
+    const { store, sourceId } = await fresh('fill')
+    const s = store.upsert({ ...record('/tmp/samples/loop.wav', sourceId), durationSec: 8 })
+    store.saveAnalysis([{ id: s.id, bpm: { value: 120, confidence: 0.91, alternatives: [60, 240] } }])
+    const u = store.getSound(s.id)!
+    expect(u).toMatchObject({ bpm: 120, bpmSource: 'analysis', bpmVersion: ANALYZER_VERSIONS.bpm })
+    expect(u.bpmAlternatives).toEqual([60, 240])
+  })
+
+  it('refreshes an older analysis tempo and clears it when the new analyzer finds no pulse', async () => {
+    const { store, sourceId } = await fresh('refresh')
+    const s = store.upsert({ ...record('/tmp/samples/pad.wav', sourceId), durationSec: 8 })
+    store.saveAnalysis([{ id: s.id, bpm: { value: 97, confidence: 0.4 } }])
+    store.saveAnalysis([{ id: s.id, bpm: { value: 128, confidence: 0.8 } }])
+    expect(store.getSound(s.id)!.bpm).toBe(128)
+    store.saveAnalysis([{ id: s.id, bpm: { value: null, confidence: 0.1 } }])
+    expect(store.getSound(s.id)).toMatchObject({ bpm: null, bpmSource: null })
+  })
+
+  it('keeps the producer octave when audio reads a weak filename tempo at half/double time', async () => {
+    const { store, sourceId } = await fresh('octave')
+    const s = store.upsert({ ...record('/tmp/samples/trap.wav', sourceId), durationSec: 9, bpm: 140, bpmConfidence: 0.6, bpmSource: 'filename' })
+    expect(needsAudioBpm(s)).toBe(true)
+    store.saveAnalysis([{ id: s.id, bpm: { value: 70, confidence: 0.9 } }])
+    const u = store.getSound(s.id)!
+    expect(u.bpm).toBe(140)
+    expect(u.bpmSource).toBe('filename')
+    expect(u.bpmConfidence).toBeGreaterThanOrEqual(0.9)
+  })
+
+  it('never re-analyses a confident filename tempo', async () => {
+    const { store, sourceId } = await fresh('trusted')
+    const s = store.upsert({ ...record('/tmp/samples/loop90.wav', sourceId), durationSec: 10.67, bpm: 90, bpmConfidence: 0.92, bpmSource: 'filename' })
+    expect(needsAudioBpm(s)).toBe(false)
+  })
+
+  it('lets the upgraded analyzer replace an older analysis key and records its candidates', async () => {
+    const { store, sourceId } = await fresh('rekey')
+    const s = store.upsert(record('/tmp/samples/loop.wav', sourceId))
+    store.saveAnalysis([{ id: s.id, key: { tonic: 'E', mode: 'minor', confidence: 0.9 } }])
+    store.saveAnalysis([
+      {
+        id: s.id,
+        key: {
+          tonic: 'A',
+          mode: 'minor',
+          confidence: 0.61,
+          candidates: [
+            { tonic: 'A', mode: 'minor', p: 0.61 },
+            { tonic: 'C', mode: 'major', p: 0.2 }
+          ]
+        }
+      }
+    ])
+    const u = store.getSound(s.id)!
+    expect(u).toMatchObject({ keyTonic: 'A', keyMode: 'minor', keySource: 'analysis', keyConfidence: 0.61 })
+    expect(u.keyCandidates?.[1]).toEqual({ tonic: 'C', mode: 'major', p: 0.2 })
+  })
+
+  it('a manual tempo clears the analysis alternatives', async () => {
+    const { store, sourceId } = await fresh('manual')
+    const s = store.upsert({ ...record('/tmp/samples/loop.wav', sourceId), durationSec: 8 })
+    store.saveAnalysis([{ id: s.id, bpm: { value: 120, confidence: 0.9, alternatives: [60, 240] } }])
+    store.applyOverride(s.id, { bpm: 60 })
+    expect(store.getSound(s.id)).toMatchObject({ bpm: 60, bpmSource: 'manual', bpmAlternatives: null })
   })
 })
