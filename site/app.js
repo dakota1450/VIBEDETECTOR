@@ -454,11 +454,11 @@
      Downloads — GitHub Releases API on Pages; /api/releases (dist/) for local dev
      ====================================================================== */
   const FALLBACK = {
-    version: '0.4.0',
+    version: '0.5.0',
     platforms: [
-      { os: 'mac', label: 'macOS', note: 'Apple Silicon & Intel · .dmg', ext: 'dmg', sizeLabel: '204 MB', file: 'Vibe Detector-0.4.0-universal.dmg' },
-      { os: 'mac', label: 'macOS', note: 'Apple Silicon & Intel · .zip', ext: 'zip', sizeLabel: '197 MB', file: 'Vibe Detector-0.4.0-universal.zip' },
-      { os: 'win', label: 'Windows', note: 'Windows 10+ · 64-bit .zip', ext: 'zip', sizeLabel: '134 MB', file: 'Vibe Detector-0.4.0-x64.zip' },
+      { os: 'mac', label: 'macOS', note: 'Apple Silicon & Intel · .dmg', ext: 'dmg', sizeLabel: '205 MB', file: 'Vibe Detector-0.5.0-universal.dmg' },
+      { os: 'mac', label: 'macOS', note: 'Apple Silicon & Intel · .zip', ext: 'zip', sizeLabel: '197 MB', file: 'Vibe Detector-0.5.0-universal.zip' },
+      { os: 'win', label: 'Windows', note: 'Windows 10+ · 64-bit .zip', ext: 'zip', sizeLabel: '134 MB', file: 'Vibe Detector-0.5.0-x64.zip' },
     ],
   };
 
